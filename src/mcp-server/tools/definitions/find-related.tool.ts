@@ -56,6 +56,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
       reason: 'elink_error',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'NCBI ELink returned an <ERROR> payload for this PMID/relationship pair.',
+      recovery: 'Verify the source PMID exists or try a different relationship type.',
     },
   ] as const,
 
@@ -141,6 +142,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
         pmid: input.pmid,
         relationship: input.relationship,
         ncbiError: firstResult.ERROR,
+        ...ctx.recoveryFor('elink_error'),
       });
     }
 

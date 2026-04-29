@@ -26,18 +26,21 @@ export const NCBI_SERVICE_ERRORS = [
     reason: 'queue_full',
     code: JsonRpcErrorCode.RateLimited,
     when: 'Local NCBI request queue is at capacity.',
+    recovery: 'Retry after 1-2 seconds; the request queue hit the NCBI rate limit.',
     retryable: true,
   },
   {
     reason: 'ncbi_unreachable',
     code: JsonRpcErrorCode.ServiceUnavailable,
     when: 'NCBI E-utilities is unreachable after all retry attempts.',
+    recovery: 'Retry after a brief delay; NCBI was unreachable across all retry attempts.',
     retryable: true,
   },
   {
     reason: 'ncbi_deadline_exceeded',
     code: JsonRpcErrorCode.Timeout,
     when: 'Total request deadline expired before NCBI returned a response.',
+    recovery: 'Reduce batch size or retry; NCBI may be under temporary load.',
     retryable: true,
   },
 ] as const;

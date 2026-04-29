@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-04-24 17:59:13
+Generated on: 2026-04-29 23:19:48
 
 ```text
 pubmed-mcp-server/
@@ -106,6 +106,15 @@ pubmed-mcp-server/
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
+├── changelog/
+│   ├── 2.0.x/
+│   ├── 2.1.x/
+│   ├── 2.2.x/
+│   ├── 2.3.x/
+│   ├── 2.4.x/
+│   ├── 2.5.x/
+│   ├── 2.6.x/
+│   └── template.md
 ├── docs/
 │   ├── design.md
 │   └── mcpmed-pr-draft.md
@@ -122,10 +131,12 @@ pubmed-mcp-server/
 │   ├── build-changelog.ts
 │   ├── build.ts
 │   ├── check-docs-sync.ts
+│   ├── check-framework-antipatterns.ts
 │   ├── check-skills-sync.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
+│   ├── split-changelog.ts
 │   └── tree.ts
 ├── skills/
 │   ├── add-app-tool/
@@ -204,6 +215,7 @@ pubmed-mcp-server/
 │   │   └── tools/
 │   │       └── definitions/
 │   │           ├── _concepts.ts
+│   │           ├── _error-contracts.ts
 │   │           ├── _schemas.ts
 │   │           ├── convert-ids.tool.ts
 │   │           ├── fetch-articles.tool.ts
@@ -245,6 +257,7 @@ pubmed-mcp-server/
 │   │   │       └── database-info.resource.test.ts
 │   │   └── tools/
 │   │       └── definitions/
+│   │           ├── _fuzz-helpers.ts
 │   │           ├── convert-ids.tool.test.ts
 │   │           ├── fetch-articles.tool.test.ts
 │   │           ├── fetch-fulltext.tool.test.ts
@@ -253,7 +266,8 @@ pubmed-mcp-server/
 │   │           ├── lookup-citation.tool.test.ts
 │   │           ├── lookup-mesh.tool.test.ts
 │   │           ├── search-articles.tool.test.ts
-│   │           └── spell-check.tool.test.ts
+│   │           ├── spell-check.tool.test.ts
+│   │           └── tools.fuzz.test.ts
 │   ├── services/
 │   │   ├── ncbi/
 │   │   │   ├── formatting/

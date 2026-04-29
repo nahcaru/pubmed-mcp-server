@@ -199,6 +199,8 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       reason: 'invalid_pmc_efetch_response',
       code: JsonRpcErrorCode.SerializationError,
       when: 'PMC EFetch returned a payload missing the pmc-articleset wrapper.',
+      recovery:
+        'Retry once; if it persists, NCBI returned malformed data — try fewer PMC IDs at once.',
     },
   ] as const,
 
@@ -313,7 +315,10 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
         throw ctx.fail(
           'invalid_pmc_efetch_response',
           'Invalid PMC EFetch response: missing pmc-articleset',
-          { requestedPmcIdCount: pmcIds.length },
+          {
+            requestedPmcIdCount: pmcIds.length,
+            ...ctx.recoveryFor('invalid_pmc_efetch_response'),
+          },
         );
 
       let parsed = findAll(articleSet, 'article').map(parsePmcArticle);

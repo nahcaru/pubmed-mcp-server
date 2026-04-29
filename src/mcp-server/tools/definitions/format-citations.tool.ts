@@ -29,7 +29,13 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
   input: z.object({
     pmids: z.array(pmidStringSchema).min(1).max(50).describe('PubMed IDs to cite'),
     format: z
-      .union([CitationStyleEnum, z.array(CitationStyleEnum).min(1)])
+      .union([
+        CitationStyleEnum.describe('Single citation style. One of: apa, mla, bibtex, ris.'),
+        z
+          .array(CitationStyleEnum)
+          .min(1)
+          .describe('Multiple citation styles to generate. Each entry: apa, mla, bibtex, or ris.'),
+      ])
       .default('apa')
       .describe(
         'Citation format(s) to generate — single style as a string or multiple as an array. Allowed values: apa, mla, bibtex, ris.',

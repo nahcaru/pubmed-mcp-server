@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.6](changelog/2.6.x/2.6.6.md) — 2026-04-29 · ⚠️ Breaking
+
+Recovery hints on every error contract; `pubmed_convert_ids` input renamed `idtype` → `idType` for camelCase parity; adopts `@cyanheads/mcp-ts-core` v0.8.6.
+
 ## [2.6.5](changelog/2.6.x/2.6.5.md) — 2026-04-28 · ⚠️ Breaking
 
 Typed error contracts on NCBI tools, service-layer logger metadata typed end-to-end, fuzz coverage for all 9 tools, plus DX renames on `pubmed_format_citations` (`styles` → `format`) and `pubmed_lookup_mesh` (`term` → `query`).

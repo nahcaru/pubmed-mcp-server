@@ -124,6 +124,8 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
       reason: 'invalid_efetch_response',
       code: JsonRpcErrorCode.SerializationError,
       when: 'NCBI EFetch returned a payload missing the PubmedArticleSet wrapper.',
+      recovery:
+        'Retry once; if it persists, NCBI returned malformed data — try fewer PMIDs at once.',
     },
   ] as const,
 
@@ -154,7 +156,7 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
       throw ctx.fail(
         'invalid_efetch_response',
         'Invalid EFetch response from NCBI: missing PubmedArticleSet',
-        { requestedPmids: input.pmids.length },
+        { requestedPmids: input.pmids.length, ...ctx.recoveryFor('invalid_efetch_response') },
       );
     }
 

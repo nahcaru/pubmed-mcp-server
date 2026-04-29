@@ -32,7 +32,7 @@ export const convertIdsTool = tool('pubmed_convert_ids', {
       .describe(
         'Article identifiers to convert. All IDs must be the same type. DOIs: "10.1093/nar/gks1195", PMIDs: "23193287", PMCIDs: "PMC3531190".',
       ),
-    idtype: z
+    idType: z
       .enum(['pmcid', 'pmid', 'doi'])
       .describe(
         'The type of IDs being submitted. Required so the API can unambiguously resolve them.',
@@ -71,10 +71,10 @@ export const convertIdsTool = tool('pubmed_convert_ids', {
   async handler(input, ctx) {
     ctx.log.info('Executing pubmed_convert_ids', {
       count: input.ids.length,
-      idtype: input.idtype,
+      idType: input.idType,
     });
 
-    const raw = await getNcbiService().idConvert(input.ids, input.idtype, { signal: ctx.signal });
+    const raw = await getNcbiService().idConvert(input.ids, input.idType, { signal: ctx.signal });
 
     // NCBI returns pmid as a number in JSON — coerce all ID fields to strings
     const records = raw.map((r) => {

@@ -15,27 +15,27 @@ const { convertIdsTool } = await import('@/mcp-server/tools/definitions/convert-
 
 describe('convertIdsTool', () => {
   it('validates input schema', () => {
-    const input = convertIdsTool.input.parse({ ids: ['23193287'], idtype: 'pmid' });
+    const input = convertIdsTool.input.parse({ ids: ['23193287'], idType: 'pmid' });
     expect(input.ids).toEqual(['23193287']);
-    expect(input.idtype).toBe('pmid');
+    expect(input.idType).toBe('pmid');
   });
 
   it('rejects empty ids array', () => {
-    expect(() => convertIdsTool.input.parse({ ids: [], idtype: 'pmid' })).toThrow();
+    expect(() => convertIdsTool.input.parse({ ids: [], idType: 'pmid' })).toThrow();
   });
 
   it('rejects more than 50 ids', () => {
     const ids = Array.from({ length: 51 }, (_, i) => String(i));
-    expect(() => convertIdsTool.input.parse({ ids, idtype: 'pmid' })).toThrow();
+    expect(() => convertIdsTool.input.parse({ ids, idType: 'pmid' })).toThrow();
   });
 
-  it('rejects invalid idtype', () => {
-    expect(() => convertIdsTool.input.parse({ ids: ['123'], idtype: 'invalid' })).toThrow();
+  it('rejects invalid idType', () => {
+    expect(() => convertIdsTool.input.parse({ ids: ['123'], idType: 'invalid' })).toThrow();
   });
 
-  it('accepts all valid idtype values', () => {
-    for (const idtype of ['pmid', 'pmcid', 'doi']) {
-      expect(() => convertIdsTool.input.parse({ ids: ['123'], idtype })).not.toThrow();
+  it('accepts all valid idType values', () => {
+    for (const idType of ['pmid', 'pmcid', 'doi']) {
+      expect(() => convertIdsTool.input.parse({ ids: ['123'], idType })).not.toThrow();
     }
   });
 
@@ -50,7 +50,7 @@ describe('convertIdsTool', () => {
     ]);
 
     const ctx = createMockContext();
-    const input = convertIdsTool.input.parse({ ids: ['23193287'], idtype: 'pmid' });
+    const input = convertIdsTool.input.parse({ ids: ['23193287'], idType: 'pmid' });
     const result = await convertIdsTool.handler(input, ctx);
 
     expect(result.records).toEqual([
@@ -77,7 +77,7 @@ describe('convertIdsTool', () => {
     ]);
 
     const ctx = createMockContext();
-    const input = convertIdsTool.input.parse({ ids: ['23193287', '99999999'], idtype: 'pmid' });
+    const input = convertIdsTool.input.parse({ ids: ['23193287', '99999999'], idType: 'pmid' });
     const result = await convertIdsTool.handler(input, ctx);
 
     expect(result.totalConverted).toBe(1);
@@ -96,7 +96,7 @@ describe('convertIdsTool', () => {
       ]);
 
       const ctx = createMockContext();
-      const input = convertIdsTool.input.parse({ ids: ['37952131'], idtype: 'pmid' });
+      const input = convertIdsTool.input.parse({ ids: ['37952131'], idType: 'pmid' });
       const result = await convertIdsTool.handler(input, ctx);
 
       expect(result.records[0]?.errmsg).toContain('pubmed_fetch_articles');
@@ -109,7 +109,7 @@ describe('convertIdsTool', () => {
       ]);
 
       const ctx = createMockContext();
-      const input = convertIdsTool.input.parse({ ids: ['99999999'], idtype: 'pmid' });
+      const input = convertIdsTool.input.parse({ ids: ['99999999'], idType: 'pmid' });
       const result = await convertIdsTool.handler(input, ctx);
 
       expect(result.records[0]?.errmsg).toBe('Some other error from NCBI');
@@ -122,18 +122,18 @@ describe('convertIdsTool', () => {
     ]);
 
     const ctx = createMockContext();
-    const input = convertIdsTool.input.parse({ ids: ['PMC3531190'], idtype: 'pmcid' });
+    const input = convertIdsTool.input.parse({ ids: ['PMC3531190'], idType: 'pmcid' });
     const result = await convertIdsTool.handler(input, ctx);
 
     expect(result.records[0]).not.toHaveProperty('doi');
     expect(result.records[0]).not.toHaveProperty('errmsg');
   });
 
-  it('passes idtype through to service', async () => {
+  it('passes idType through to service', async () => {
     mockIdConvert.mockResolvedValue([]);
 
     const ctx = createMockContext();
-    const input = convertIdsTool.input.parse({ ids: ['10.1093/nar/gks1195'], idtype: 'doi' });
+    const input = convertIdsTool.input.parse({ ids: ['10.1093/nar/gks1195'], idType: 'doi' });
     await convertIdsTool.handler(input, ctx);
 
     expect(mockIdConvert).toHaveBeenCalledWith(
@@ -151,7 +151,7 @@ describe('convertIdsTool', () => {
     ]);
 
     const ctx = createMockContext();
-    const input = convertIdsTool.input.parse({ ids: ['111', '222', '333'], idtype: 'pmid' });
+    const input = convertIdsTool.input.parse({ ids: ['111', '222', '333'], idType: 'pmid' });
     const result = await convertIdsTool.handler(input, ctx);
 
     expect(result.records).toHaveLength(3);
