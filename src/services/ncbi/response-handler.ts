@@ -5,8 +5,8 @@
  * @module src/services/ncbi/response-handler
  */
 
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { logger } from '@cyanheads/mcp-ts-core/utils';
+import { serializationError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 import { XMLParser as FastXmlParser, XMLValidator } from 'fast-xml-parser';
 
 import type { NcbiRequestOptions } from './types.js';
@@ -251,20 +251,23 @@ export class NcbiResponseHandler {
   }
 
   /**
-   * Extract a structured error from a parsed NCBI XML body and throw it as an
-   * `McpError`. Never returns.
+   * Extract a structured error from a parsed NCBI XML body and throw it via
+   * `serviceUnavailable()`. Never returns.
    */
   private throwNcbiError(parsedXml: Record<string, unknown>, endpoint: string): never {
     const errorMessages = this.extractNcbiErrorMessages(parsedXml);
-    logger.error('NCBI API returned an error in XML response.', {
-      endpoint,
-      errors: errorMessages,
-    } as never);
-    throw new McpError(
-      JsonRpcErrorCode.ServiceUnavailable,
-      `NCBI API Error: ${errorMessages.join('; ')}`,
-      { endpoint, ncbiErrors: errorMessages },
+    logger.error(
+      'NCBI API returned an error in XML response.',
+      requestContextService.createRequestContext({
+        operation: 'NcbiXmlError',
+        endpoint,
+        errors: errorMessages,
+      }),
     );
+    throw serviceUnavailable(`NCBI API Error: ${errorMessages.join('; ')}`, {
+      endpoint,
+      ncbiErrors: errorMessages,
+    });
   }
 
   extractNcbiErrorMessages(parsedXml: Record<string, unknown>): string[] {
@@ -297,33 +300,54 @@ export class NcbiResponseHandler {
     const retmode = options?.retmode ?? 'xml';
 
     if (retmode === 'text') {
-      logger.debug('Received text response from NCBI.', { endpoint, retmode } as never);
+      logger.debug(
+        'Received text response from NCBI.',
+        requestContextService.createRequestContext({
+          operation: 'NcbiParseText',
+          endpoint,
+          retmode,
+        }),
+      );
       return responseText as T;
     }
 
     if (retmode === 'xml') {
-      logger.debug('Parsing XML response from NCBI.', { endpoint, retmode } as never);
+      logger.debug(
+        'Parsing XML response from NCBI.',
+        requestContextService.createRequestContext({
+          operation: 'NcbiParseXml',
+          endpoint,
+          retmode,
+        }),
+      );
 
       const xmlForValidation = responseText.replace(/<!DOCTYPE[^>]*>/gi, '');
       const validationResult = XMLValidator.validate(xmlForValidation);
       if (validationResult !== true) {
         const isHtml = /^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(responseText);
         if (isHtml) {
-          logger.warning('NCBI returned HTML instead of XML (likely rate-limited).', {
-            endpoint,
-          } as never);
-          throw new McpError(
-            JsonRpcErrorCode.ServiceUnavailable,
+          logger.warning(
+            'NCBI returned HTML instead of XML (likely rate-limited).',
+            requestContextService.createRequestContext({
+              operation: 'NcbiHtmlResponse',
+              endpoint,
+            }),
+          );
+          throw serviceUnavailable(
             'NCBI API returned an HTML response instead of XML — likely rate-limited.',
             { endpoint },
           );
         }
 
-        logger.error('Invalid XML response from NCBI.', {
-          endpoint,
-          responseSnippet: responseText.substring(0, 500),
-        } as never);
-        throw new McpError(JsonRpcErrorCode.SerializationError, 'Received invalid XML from NCBI.', {
+        logger.error(
+          'Invalid XML response from NCBI.',
+          requestContextService.createRequestContext({
+            operation: 'NcbiInvalidXml',
+            endpoint,
+            responseSnippet: responseText.substring(0, 500),
+          }),
+        );
+        throw serializationError('Received invalid XML from NCBI.', {
           endpoint,
           responseSnippet: responseText.substring(0, 200),
         });
@@ -349,19 +373,23 @@ export class NcbiResponseHandler {
         parsedXml = parser.parse(xmlForParse);
       } catch (error: unknown) {
         const parserError = error instanceof Error ? error.message : String(error);
-        logger.error('Failed to parse validated XML response from NCBI.', {
-          endpoint,
-          parserError,
-          responseSnippet: responseText.substring(0, 500),
-        } as never);
-        throw new McpError(
-          JsonRpcErrorCode.SerializationError,
+        logger.error(
+          'Failed to parse validated XML response from NCBI.',
+          requestContextService.createRequestContext({
+            operation: 'NcbiXmlParseError',
+            endpoint,
+            parserError,
+            responseSnippet: responseText.substring(0, 500),
+          }),
+        );
+        throw serializationError(
           `Failed to parse XML response from NCBI: ${parserError}`,
           {
             endpoint,
             parserError,
             responseSnippet: responseText.substring(0, 200),
           },
+          { cause: error },
         );
       }
 
@@ -374,48 +402,72 @@ export class NcbiResponseHandler {
       }
 
       if (options?.returnRawXml) {
-        logger.debug('Returning raw XML string after validation.', { endpoint } as never);
+        logger.debug(
+          'Returning raw XML string after validation.',
+          requestContextService.createRequestContext({ operation: 'NcbiRawXml', endpoint }),
+        );
         return responseText as T;
       }
 
-      logger.debug('Successfully parsed XML response.', { endpoint } as never);
+      logger.debug(
+        'Successfully parsed XML response.',
+        requestContextService.createRequestContext({ operation: 'NcbiParseXmlOk', endpoint }),
+      );
       return parsedXml as T;
     }
 
     if (retmode === 'json') {
-      logger.debug('Parsing JSON response from NCBI.', { endpoint, retmode } as never);
+      logger.debug(
+        'Parsing JSON response from NCBI.',
+        requestContextService.createRequestContext({
+          operation: 'NcbiParseJson',
+          endpoint,
+          retmode,
+        }),
+      );
 
       let parsed: unknown;
       try {
         parsed = JSON.parse(responseText);
-      } catch {
-        throw new McpError(
-          JsonRpcErrorCode.SerializationError,
+      } catch (error: unknown) {
+        throw serializationError(
           'Failed to parse NCBI JSON response.',
           { endpoint, responseSnippet: responseText.substring(0, 200) },
+          { cause: error },
         );
       }
 
       if (parsed && typeof parsed === 'object' && 'error' in parsed) {
         const errorMessage = String((parsed as Record<string, unknown>).error);
-        logger.error('NCBI API returned an error in JSON response.', {
-          endpoint,
-          error: errorMessage,
-        } as never);
-        throw new McpError(JsonRpcErrorCode.ServiceUnavailable, `NCBI API Error: ${errorMessage}`, {
+        logger.error(
+          'NCBI API returned an error in JSON response.',
+          requestContextService.createRequestContext({
+            operation: 'NcbiJsonError',
+            endpoint,
+            error: errorMessage,
+          }),
+        );
+        throw serviceUnavailable(`NCBI API Error: ${errorMessage}`, {
           endpoint,
           ncbiError: errorMessage,
         });
       }
 
-      logger.debug('Successfully parsed JSON response.', { endpoint } as never);
+      logger.debug(
+        'Successfully parsed JSON response.',
+        requestContextService.createRequestContext({ operation: 'NcbiParseJsonOk', endpoint }),
+      );
       return parsed as T;
     }
 
-    logger.warning(`Unhandled retmode "${retmode}". Returning raw response text.`, {
-      endpoint,
-      retmode,
-    } as never);
+    logger.warning(
+      `Unhandled retmode "${retmode}". Returning raw response text.`,
+      requestContextService.createRequestContext({
+        operation: 'NcbiUnknownRetmode',
+        endpoint,
+        retmode,
+      }),
+    );
     return responseText as T;
   }
 }

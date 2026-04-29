@@ -5,10 +5,12 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractBriefSummaries } from '@/services/ncbi/parsing/esummary-parser.js';
 import { ensureArray } from '@/services/ncbi/parsing/xml-helpers.js';
 import { conceptMeta, EDAM_DATA_RETRIEVAL, SCHEMA_SCHOLARLY_ARTICLE } from './_concepts.js';
+import { NCBI_SERVICE_ERRORS } from './_error-contracts.js';
 import { pmidStringSchema } from './_schemas.js';
 
 // ─── ELink XML types ─────────────────────────────────────────────────────────
@@ -47,6 +49,15 @@ export const findRelatedTool = tool('pubmed_find_related', {
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/find-related.tool.ts',
+
+  errors: [
+    ...NCBI_SERVICE_ERRORS,
+    {
+      reason: 'elink_error',
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      when: 'NCBI ELink returned an <ERROR> payload for this PMID/relationship pair.',
+    },
+  ] as const,
 
   input: z.object({
     pmid: pmidStringSchema.describe('Source PubMed ID'),
@@ -122,9 +133,15 @@ export const findRelatedTool = tool('pubmed_find_related', {
     const firstResult = eLinkResultsArray[0] as ELinkResultItem | undefined;
 
     if (firstResult?.ERROR) {
-      throw new Error(
-        `ELink error: ${typeof firstResult.ERROR === 'string' ? firstResult.ERROR : JSON.stringify(firstResult.ERROR)}`,
-      );
+      const detail =
+        typeof firstResult.ERROR === 'string'
+          ? firstResult.ERROR
+          : 'NCBI returned a non-string ERROR payload';
+      throw ctx.fail('elink_error', `ELink error: ${detail}`, {
+        pmid: input.pmid,
+        relationship: input.relationship,
+        ncbiError: firstResult.ERROR,
+      });
     }
 
     const linkSet = firstResult?.LinkSet;

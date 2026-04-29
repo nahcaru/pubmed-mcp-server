@@ -16,21 +16,23 @@ const { lookupMeshTool } = await import('@/mcp-server/tools/definitions/lookup-m
 
 describe('lookupMeshTool', () => {
   it('validates input with defaults', () => {
-    const input = lookupMeshTool.input.parse({ term: 'Neoplasms' });
-    expect(input.term).toBe('Neoplasms');
+    const input = lookupMeshTool.input.parse({ query: 'Neoplasms' });
+    expect(input.query).toBe('Neoplasms');
     expect(input.maxResults).toBe(10);
     expect(input.includeDetails).toBe(true);
   });
 
-  it('returns empty results when no MeSH IDs found', async () => {
+  it('returns empty results with a recovery notice when no MeSH IDs found', async () => {
     mockESearch.mockResolvedValue({ idList: [] });
 
     const ctx = createMockContext();
-    const input = lookupMeshTool.input.parse({ term: 'xyznonexistent' });
+    const input = lookupMeshTool.input.parse({ query: 'xyznonexistent' });
     const result = await lookupMeshTool.handler(input, ctx);
 
     expect(result.results).toEqual([]);
-    expect(result.term).toBe('xyznonexistent');
+    expect(result.query).toBe('xyznonexistent');
+    expect(result.notice).toMatch(/xyznonexistent/);
+    expect(result.notice).toMatch(/spell_check|search_articles/);
   });
 
   it('returns parsed MeSH records', async () => {
@@ -58,18 +60,19 @@ describe('lookupMeshTool', () => {
     });
 
     const ctx = createMockContext();
-    const input = lookupMeshTool.input.parse({ term: 'Neoplasms' });
+    const input = lookupMeshTool.input.parse({ query: 'Neoplasms' });
     const result = await lookupMeshTool.handler(input, ctx);
 
     expect(result.results).toHaveLength(1);
     expect(result.results[0]?.meshId).toBe('68009369');
     expect(result.results[0]?.name).toBe('Neoplasms');
     expect(result.results[0]?.scopeNote).toContain('abnormal growth');
+    expect(result.notice).toBeUndefined();
   });
 
   it('formats output', () => {
     const blocks = lookupMeshTool.format!({
-      term: 'Neoplasms',
+      query: 'Neoplasms',
       results: [
         {
           meshId: '68009369',
@@ -82,5 +85,15 @@ describe('lookupMeshTool', () => {
     expect(blocks[0]?.text).toContain('MeSH Lookup');
     expect(blocks[0]?.text).toContain('Neoplasms');
     expect(blocks[0]?.text).toContain('C04');
+  });
+
+  it('renders the recovery notice in formatted output', () => {
+    const blocks = lookupMeshTool.format!({
+      query: 'xyznonexistent',
+      results: [],
+      notice: 'No MeSH descriptors matched "xyznonexistent". Try `pubmed_spell_check`.',
+    });
+    expect(blocks[0]?.text).toContain('Found **0** result(s).');
+    expect(blocks[0]?.text).toContain('pubmed_spell_check');
   });
 });

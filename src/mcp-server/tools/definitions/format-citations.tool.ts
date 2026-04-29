@@ -16,8 +16,11 @@ import type { XmlPubmedArticle } from '@/services/ncbi/types.js';
 import { conceptMeta, EDAM_DATA_FORMATTING, SCHEMA_CREATIVE_WORK } from './_concepts.js';
 import { pmidStringSchema } from './_schemas.js';
 
+const CitationStyleEnum = z.enum(['apa', 'mla', 'bibtex', 'ris']);
+
 export const formatCitationsTool = tool('pubmed_format_citations', {
-  description: 'Get formatted citations for PubMed articles in APA, MLA, BibTeX, or RIS format.',
+  description:
+    'Get formatted citations for PubMed articles in one or more styles (APA, MLA, BibTeX, RIS). Pass a single style as a string or multiple as an array.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_CREATIVE_WORK, EDAM_DATA_FORMATTING]),
   sourceUrl:
@@ -25,10 +28,12 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
 
   input: z.object({
     pmids: z.array(pmidStringSchema).min(1).max(50).describe('PubMed IDs to cite'),
-    styles: z
-      .array(z.enum(['apa', 'mla', 'bibtex', 'ris']))
-      .default(['apa'])
-      .describe('Citation styles to generate'),
+    format: z
+      .union([CitationStyleEnum, z.array(CitationStyleEnum).min(1)])
+      .default('apa')
+      .describe(
+        'Citation format(s) to generate — single style as a string or multiple as an array. Allowed values: apa, mla, bibtex, ris.',
+      ),
   }),
 
   output: z.object({
@@ -52,9 +57,10 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
   }),
 
   async handler(input, ctx) {
+    const formats: CitationStyle[] = Array.isArray(input.format) ? input.format : [input.format];
     ctx.log.debug('Fetching articles for citation generation', {
       pmids: input.pmids,
-      styles: input.styles,
+      formats,
     });
     const raw = await getNcbiService().eFetch(
       { db: 'pubmed', id: input.pmids.join(','), retmode: 'xml' },
@@ -67,7 +73,7 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
       return {
         pmid: parsed.pmid,
         title: parsed.title,
-        citations: formatCitations(parsed, input.styles as CitationStyle[]),
+        citations: formatCitations(parsed, formats),
       };
     });
 

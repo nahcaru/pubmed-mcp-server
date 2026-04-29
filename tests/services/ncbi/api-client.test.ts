@@ -7,9 +7,13 @@ import { McpError } from '@cyanheads/mcp-ts-core/errors';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NcbiApiClient, type NcbiApiClientConfig } from '@/services/ncbi/api-client.js';
 
-vi.mock('@cyanheads/mcp-ts-core/utils', () => {
+vi.mock('@cyanheads/mcp-ts-core/utils', async () => {
+  const actual = await vi.importActual<typeof import('@cyanheads/mcp-ts-core/utils')>(
+    '@cyanheads/mcp-ts-core/utils',
+  );
   const mockFetch = vi.fn();
   return {
+    ...actual,
     logger: { debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() },
     fetchWithTimeout: mockFetch,
     requestContextService: {
@@ -93,34 +97,34 @@ describe('NcbiApiClient', () => {
 
   it('throws RateLimited for HTTP 429', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 429, text: () => Promise.resolve('') });
+    mockFetch.mockResolvedValueOnce(new Response('', { status: 429 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
       code: JsonRpcErrorCode.RateLimited,
-      message: expect.stringContaining('HTTP 429'),
+      message: expect.stringContaining('429'),
     });
   });
 
   it('throws ServiceUnavailable for HTTP 5xx', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 503, text: () => Promise.resolve('') });
+    mockFetch.mockResolvedValueOnce(new Response('', { status: 503 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
       code: JsonRpcErrorCode.ServiceUnavailable,
-      message: expect.stringContaining('HTTP 503'),
+      message: expect.stringContaining('503'),
     });
   });
 
-  it('throws InvalidRequest for other 4xx', async () => {
+  it('throws InvalidParams for HTTP 400', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 400, text: () => Promise.resolve('') });
+    mockFetch.mockResolvedValueOnce(new Response('', { status: 400 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
-      code: JsonRpcErrorCode.InvalidRequest,
-      message: expect.stringContaining('HTTP 400'),
+      code: JsonRpcErrorCode.InvalidParams,
+      message: expect.stringContaining('400'),
     });
   });
 

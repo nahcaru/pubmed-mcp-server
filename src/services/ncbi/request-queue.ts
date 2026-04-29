@@ -5,7 +5,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { logger } from '@cyanheads/mcp-ts-core/utils';
+import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 
 import type { NcbiRequestParams } from './types.js';
 
@@ -41,7 +41,7 @@ export class NcbiRequestQueue {
         new McpError(
           JsonRpcErrorCode.RateLimited,
           `NCBI request queue is full (max ${this.maxQueueSize}).`,
-          { endpoint, queueSize: this.queue.length },
+          { reason: 'queue_full', endpoint, queueSize: this.queue.length },
         ),
       );
     }
@@ -78,25 +78,34 @@ export class NcbiRequestQueue {
       const wait = this.delayMs - elapsed;
 
       if (wait > 0) {
-        logger.debug(`Delaying NCBI request by ${wait}ms to respect rate limit.`, {
-          endpoint,
-          delayMs: wait,
-        } as never);
+        logger.debug(
+          `Delaying NCBI request by ${wait}ms to respect rate limit.`,
+          requestContextService.createRequestContext({
+            operation: 'NcbiQueueWait',
+            endpoint,
+            delayMs: wait,
+          }),
+        );
         await new Promise<void>((r) => setTimeout(r, wait));
       }
 
       this.lastRequestTime = Date.now();
-      logger.info(`Executing NCBI request via queue: ${endpoint}`, {
-        endpoint,
-      } as never);
+      logger.info(
+        `Executing NCBI request via queue: ${endpoint}`,
+        requestContextService.createRequestContext({ operation: 'NcbiQueueDispatch', endpoint }),
+      );
 
       const result = await task();
       resolve(result);
     } catch (error: unknown) {
-      logger.error('Error processing NCBI request from queue.', {
-        endpoint,
-        errorMessage: error instanceof Error ? error.message : String(error),
-      } as never);
+      logger.error(
+        'Error processing NCBI request from queue.',
+        requestContextService.createRequestContext({
+          operation: 'NcbiQueueProcess',
+          endpoint,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        }),
+      );
       reject(error);
     } finally {
       this.processing = false;

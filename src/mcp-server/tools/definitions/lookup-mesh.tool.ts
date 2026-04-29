@@ -90,7 +90,7 @@ function parseSummaryRecords(data: unknown, ids: string[], includeDetails: boole
 
 export const lookupMeshTool = tool('pubmed_lookup_mesh', {
   description:
-    'Search and explore MeSH (Medical Subject Headings) vocabulary. Essential for building precise PubMed queries.',
+    'Search and explore the MeSH (Medical Subject Headings) controlled vocabulary. Returns descriptor records with tree numbers, scope notes, and entry terms.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([
     SCHEMA_DEFINED_TERM,
@@ -102,7 +102,7 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/lookup-mesh.tool.ts',
 
   input: z.object({
-    term: z.string().min(1).describe('MeSH term to look up'),
+    query: z.string().min(1).describe('MeSH descriptor name or free-text term to look up'),
     maxResults: z.number().int().min(1).max(50).default(10).describe('Maximum results'),
     includeDetails: z
       .boolean()
@@ -111,7 +111,7 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
   }),
 
   output: z.object({
-    term: z.string().describe('Original search term'),
+    query: z.string().describe('Original search query'),
     results: z
       .array(
         z
@@ -125,19 +125,25 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
           .describe('Matching MeSH descriptor record'),
       )
       .describe('Matching MeSH records'),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Optional guidance when no descriptors matched — suggests spell-check or free-text search. Absent on successful results.',
+      ),
   }),
 
   async handler(input, ctx) {
-    const { term, maxResults, includeDetails } = input;
+    const { query, maxResults, includeDetails } = input;
     const ncbi = getNcbiService();
-    ctx.log.debug('MeSH lookup started', { term, maxResults, includeDetails });
+    ctx.log.debug('MeSH lookup started', { query, maxResults, includeDetails });
 
-    const hasFieldTag = /\[.+\]/.test(term);
+    const hasFieldTag = /\[.+\]/.test(query);
     const callOpts = { signal: ctx.signal };
-    const broadSearch = ncbi.eSearch({ db: 'mesh', term, retmax: maxResults }, callOpts);
+    const broadSearch = ncbi.eSearch({ db: 'mesh', term: query, retmax: maxResults }, callOpts);
     const exactSearch = hasFieldTag
       ? undefined
-      : ncbi.eSearch({ db: 'mesh', term: `${term}[MH]`, retmax: 1 }, callOpts);
+      : ncbi.eSearch({ db: 'mesh', term: `${query}[MH]`, retmax: 1 }, callOpts);
     const [broadResult, exactResult] = await Promise.all([broadSearch, exactSearch]);
 
     const seen = new Set<string>();
@@ -150,26 +156,33 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
     }
     ids.length = Math.min(ids.length, maxResults);
 
-    if (ids.length === 0) return { term, results: [] };
+    if (ids.length === 0) {
+      return {
+        query,
+        results: [],
+        notice: `No MeSH descriptors matched "${query}". Try \`pubmed_spell_check\` for a suggested correction, broaden the term, or use \`pubmed_search_articles\` for free-text discovery against article metadata.`,
+      };
+    }
 
     const summaryData = await ncbi.eSummary({ db: 'mesh', id: ids.join(',') }, callOpts);
     const results = parseSummaryRecords(summaryData, ids, includeDetails);
 
-    const termLower = term.toLowerCase();
+    const queryLower = query.toLowerCase();
     results.sort((a, b) => {
-      const aExact = a.name.toLowerCase() === termLower ? 0 : 1;
-      const bExact = b.name.toLowerCase() === termLower ? 0 : 1;
+      const aExact = a.name.toLowerCase() === queryLower ? 0 : 1;
+      const bExact = b.name.toLowerCase() === queryLower ? 0 : 1;
       return aExact - bExact;
     });
 
-    return { term, results };
+    return { query, results };
   },
 
   format: (result) => {
     const lines = [
-      `# MeSH Lookup: "${result.term}"`,
+      `# MeSH Lookup: "${result.query}"`,
       `Found **${result.results.length}** result(s).`,
     ];
+    if (result.notice) lines.push(`\n> ${result.notice}`);
     for (const r of result.results) {
       lines.push(`\n## ${r.name}`);
       lines.push(`- **MeSH ID:** ${r.meshId}`);

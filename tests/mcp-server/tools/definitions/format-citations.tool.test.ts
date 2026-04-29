@@ -22,7 +22,30 @@ describe('formatCitationsTool', () => {
 
   it('validates input with defaults', () => {
     const input = formatCitationsTool.input.parse({ pmids: ['12345'] });
-    expect(input.styles).toEqual(['apa']);
+    expect(input.format).toBe('apa');
+  });
+
+  it('accepts a single format as a string', () => {
+    const input = formatCitationsTool.input.parse({ pmids: ['12345'], format: 'bibtex' });
+    expect(input.format).toBe('bibtex');
+  });
+
+  it('accepts multiple formats as an array', () => {
+    const input = formatCitationsTool.input.parse({
+      pmids: ['12345'],
+      format: ['apa', 'mla'],
+    });
+    expect(input.format).toEqual(['apa', 'mla']);
+  });
+
+  it('rejects empty format array', () => {
+    expect(() => formatCitationsTool.input.parse({ pmids: ['12345'], format: [] })).toThrow();
+  });
+
+  it('rejects unknown format strings', () => {
+    expect(() =>
+      formatCitationsTool.input.parse({ pmids: ['12345'], format: 'chicago' }),
+    ).toThrow();
   });
 
   it('rejects non-numeric PMIDs', () => {
@@ -87,7 +110,7 @@ describe('formatCitationsTool', () => {
     const ctx = createMockContext();
     const input = formatCitationsTool.input.parse({
       pmids: ['12345'],
-      styles: ['apa', 'bibtex'],
+      format: ['apa', 'bibtex'],
     });
     const result = await formatCitationsTool.handler(input, ctx);
 
@@ -127,7 +150,7 @@ describe('formatCitationsTool', () => {
     const ctx = createMockContext();
     const input = formatCitationsTool.input.parse({
       pmids: ['12345', '99999'],
-      styles: ['apa'],
+      format: 'apa',
     });
     const result = await formatCitationsTool.handler(input, ctx);
 
@@ -177,7 +200,7 @@ describe('formatCitationsTool', () => {
     const ctx = createMockContext();
     const input = formatCitationsTool.input.parse({
       pmids: ['24680'],
-      styles: ['apa', 'ris'],
+      format: ['apa', 'ris'],
     });
     const result = await formatCitationsTool.handler(input, ctx);
 

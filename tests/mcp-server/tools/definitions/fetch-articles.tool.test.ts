@@ -63,12 +63,14 @@ describe('fetchArticlesTool', () => {
     expect(result.unavailablePmids).toEqual(['99999']);
   });
 
-  it('throws when response is missing PubmedArticleSet', async () => {
+  it('throws when response is missing PubmedArticleSet with reason "invalid_efetch_response"', async () => {
     mockEFetch.mockResolvedValue({});
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: fetchArticlesTool.errors });
     const input = fetchArticlesTool.input.parse({ pmids: ['12345'] });
 
-    await expect(fetchArticlesTool.handler(input, ctx)).rejects.toThrow(/missing PubmedArticleSet/);
+    const promise = fetchArticlesTool.handler(input, ctx);
+    await expect(promise).rejects.toThrow(/missing PubmedArticleSet/);
+    await expect(promise).rejects.toMatchObject({ data: { reason: 'invalid_efetch_response' } });
   });
 
   it('parses articles and adds URLs', async () => {

@@ -5,8 +5,14 @@
  * @module src/services/ncbi/ncbi-service
  */
 
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { logger } from '@cyanheads/mcp-ts-core/utils';
+import {
+  internalError,
+  JsonRpcErrorCode,
+  McpError,
+  serializationError,
+  timeout,
+} from '@cyanheads/mcp-ts-core/errors';
+import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 
 import { getServerConfig } from '@/config/server-config.js';
 import { NcbiApiClient } from './api-client.js';
@@ -129,11 +135,15 @@ export class NcbiService {
     const original = spellResult.Query ?? (params.term as string) ?? '';
     const corrected = spellResult.CorrectedQuery ?? '';
 
-    logger.debug('ESpell result parsed.', {
-      original,
-      corrected,
-      hasSuggestion: corrected.length > 0 && corrected !== original,
-    } as never);
+    logger.debug(
+      'ESpell result parsed.',
+      requestContextService.createRequestContext({
+        operation: 'NcbiESpell',
+        original,
+        corrected,
+        hasSuggestion: corrected.length > 0 && corrected !== original,
+      }),
+    );
 
     return {
       original,
@@ -243,11 +253,11 @@ export class NcbiService {
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
-    } catch {
-      throw new McpError(
-        JsonRpcErrorCode.SerializationError,
+    } catch (error: unknown) {
+      throw serializationError(
         'Failed to parse ID Converter JSON response.',
         { responseSnippet: text.substring(0, 200) },
+        { cause: error },
       );
     }
 
@@ -288,9 +298,11 @@ export class NcbiService {
       return await task(signal);
     } catch (error: unknown) {
       if (error instanceof NcbiDeadlineExceeded) {
-        throw new McpError(JsonRpcErrorCode.Timeout, error.message, {
-          deadlineMs: this.totalDeadlineMs,
-        });
+        throw timeout(
+          error.message,
+          { reason: 'ncbi_deadline_exceeded', deadlineMs: this.totalDeadlineMs },
+          { cause: error },
+        );
       }
       throw error;
     } finally {
@@ -331,7 +343,12 @@ export class NcbiService {
           const retryDelay = Math.round(jitter);
           logger.warning(
             `NCBI request to ${label} failed. Retrying (${attempt + 1}/${this.maxRetries}) in ${retryDelay}ms.`,
-            { endpoint: label, attempt: attempt + 1, retryDelay } as never,
+            requestContextService.createRequestContext({
+              operation: 'NcbiRetry',
+              endpoint: label,
+              attempt: attempt + 1,
+              retryDelay,
+            }),
           );
           await abortableSleep(retryDelay, signal);
           continue;
@@ -339,16 +356,22 @@ export class NcbiService {
 
         const attempts = this.maxRetries + 1;
         const msg = error instanceof Error ? error.message : String(error);
-        throw new McpError(error.code, `${msg} (failed after ${attempts} attempts)`, {
-          endpoint: label,
-          attempts,
-        });
+        // Tag transient ServiceUnavailable retries-exhausted with `ncbi_unreachable` so
+        // tool callers can switch on a stable reason. Other retryable codes (Timeout,
+        // RateLimited) keep their original code with no reason — `ncbi_deadline_exceeded`
+        // and `queue_full` are stamped at their own throw sites.
+        const reason =
+          error.code === JsonRpcErrorCode.ServiceUnavailable ? 'ncbi_unreachable' : undefined;
+        throw new McpError(
+          error.code,
+          `${msg} (failed after ${attempts} attempts)`,
+          { ...(reason && { reason }), endpoint: label, attempts },
+          { cause: error },
+        );
       }
     }
 
-    throw new McpError(JsonRpcErrorCode.InternalError, 'Request failed after all retries.', {
-      endpoint: label,
-    });
+    throw internalError('Request failed after all retries.', { endpoint: label });
   }
 
   /**
@@ -411,12 +434,16 @@ export function initNcbiService(): void {
     config.maxRetries,
     config.totalDeadlineMs,
   );
-  logger.info('NCBI service initialized.', {
-    toolIdentifier: config.toolIdentifier,
-    hasApiKey: !!config.apiKey,
-    requestDelayMs: config.requestDelayMs,
-    totalDeadlineMs: config.totalDeadlineMs,
-  } as never);
+  logger.info(
+    'NCBI service initialized.',
+    requestContextService.createRequestContext({
+      operation: 'NcbiInit',
+      toolIdentifier: config.toolIdentifier,
+      hasApiKey: !!config.apiKey,
+      requestDelayMs: config.requestDelayMs,
+      totalDeadlineMs: config.totalDeadlineMs,
+    }),
+  );
 }
 
 /** Get the initialized NCBI service. Throws if not initialized. */

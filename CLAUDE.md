@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** @cyanheads/pubmed-mcp-server
-**Version:** 2.6.4
+**Version:** 2.6.5
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core)
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -14,14 +14,14 @@ When the user asks what to do next, what's left, or needs direction, suggest rel
 
 1. **Re-run the `setup` skill** — ensures CLAUDE.md, skills, structure, and metadata are populated and up to date with the current codebase
 2. **Run the `design-mcp-server` skill** — if the tool/resource surface hasn't been mapped yet, work through domain design
-3. **Add tools/resources/prompts** — scaffold new definitions using the `add-tool`, `add-resource`, `add-prompt` skills
+3. **Add tools/resources/prompts** — scaffold new definitions using the `add-tool`, `add-app-tool`, `add-resource`, `add-prompt` skills
 4. **Add services** — scaffold domain service integrations using the `add-service` skill
 5. **Add tests** — scaffold tests for existing definitions using the `add-test` skill
 6. **Field-test definitions** — exercise tools/resources/prompts with real inputs using the `field-test` skill, get a report of issues and pain points
 7. **Run `devcheck`** — lint, format, typecheck, and security audit
 8. **Run the `security-pass` skill** — audit handlers for MCP-specific security gaps: output injection, scope blast radius, input sinks, tenant isolation
 9. **Run the `polish-docs-meta` skill** — finalize README, CHANGELOG, metadata, and agent protocol for shipping
-10. **Run the `maintenance` skill** — sync skills and dependencies after framework updates
+10. **Run the `maintenance` skill** — investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest`
 
 Tailor suggestions to what's actually missing or stale — don't recite the full list every time.
 
@@ -153,24 +153,44 @@ Handlers receive a unified `ctx` object. Key properties:
 
 ## Errors
 
-Handlers throw — the framework catches, classifies, and formats. Three escalation levels:
+Handlers throw — the framework catches, classifies, and formats.
+
+**Recommended: typed error contract.** Declare `errors: [{ reason, code, when, retryable? }]` on `tool()` / `resource()` to advertise the failure surface in `tools/list` (under `_meta['mcp-ts-core/errors']`) and receive a typed `ctx.fail(reason, …)` keyed by the declared reason union. TypeScript catches `ctx.fail('typo')` at compile time, `data.reason` is auto-populated for observability, and the linter enforces conformance against the handler body. Baseline codes (`InternalError`, `ServiceUnavailable`, `Timeout`, `ValidationError`, `SerializationError`) bubble freely and don't need declaring.
 
 ```ts
-// 1. Plain Error — framework auto-classifies from message patterns
+errors: [
+  { reason: 'no_match', code: JsonRpcErrorCode.NotFound, when: 'No requested PMID returned data' },
+],
+async handler(input, ctx) {
+  const articles = await ncbi.fetch(input.pmids);
+  if (articles.length === 0) throw ctx.fail('no_match', `None of ${input.pmids.length} PMIDs returned data`);
+  return { articles };
+}
+```
+
+**Fallback (no contract entry fits):** error factories or plain `Error`.
+
+```ts
+// Error factories — explicit code, concise
+import { notFound, serializationError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+throw notFound('Item not found', { itemId });
+throw serviceUnavailable('API unavailable', { url }, { cause: err });
+throw serializationError('Invalid XML response', { endpoint });
+
+// Plain Error — framework auto-classifies from message patterns
 throw new Error('Item not found');           // → NotFound
 throw new Error('Invalid query format');     // → ValidationError
 
-// 2. Error factories — explicit code, concise
-import { notFound, validationError, forbidden, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
-throw notFound('Item not found', { itemId });
-throw serviceUnavailable('API unavailable', { url }, { cause: err });
-
-// 3. McpError — full control over code and data
+// McpError — full control when the code is dynamic
 import { McpError, JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 throw new McpError(JsonRpcErrorCode.DatabaseError, 'Connection failed', { pool: 'primary' });
 ```
 
-Plain `Error` is fine for most cases. Use factories when the error code matters. See framework CLAUDE.md for the full auto-classification table and all available factories.
+For HTTP responses, prefer `httpErrorFromResponse(response, { service, data })` from `/utils` over hand-rolled status ladders — covers the full 4xx/5xx → `JsonRpcErrorCode` table and captures body + `Retry-After`.
+
+**Service-layer:** services don't have `ctx.fail`. To carry a contract `reason` from a service throw, pass `data: { reason: 'X' }` to the factory — the auto-classifier preserves `data` on the wire so clients see the same `error.data.reason` they'd see from `ctx.fail`.
+
+See framework CLAUDE.md and the `api-errors` skill for the full auto-classification table, all factories, and the contract reference.
 
 ---
 
@@ -231,7 +251,7 @@ Available skills:
 | `security-pass` | Audit server for MCP-flavored security gaps: output injection, scope blast radius, input sinks, tenant isolation |
 | `devcheck` | Lint, format, typecheck, audit |
 | `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
-| `maintenance` | Investigate changelogs, adopt upstream changes, sync skills after `bun update --latest` |
+| `maintenance` | Investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest` |
 | `release-and-publish` | Ship a release: verification gate, push commits+tags, publish to npm / MCP Registry / GHCR |
 | `api-auth` | Auth modes, scopes, JWT/OAuth |
 | `api-config` | AppConfig, parseConfig, env vars |

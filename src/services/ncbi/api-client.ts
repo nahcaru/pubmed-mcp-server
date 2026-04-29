@@ -5,8 +5,13 @@
  * @module src/services/ncbi/api-client
  */
 
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { fetchWithTimeout, logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
+import { McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import {
+  fetchWithTimeout,
+  httpErrorFromResponse,
+  logger,
+  requestContextService,
+} from '@cyanheads/mcp-ts-core/utils';
 
 import { NCBI_EUTILS_BASE_URL, type NcbiRequestOptions, type NcbiRequestParams } from './types.js';
 
@@ -39,26 +44,19 @@ export class NcbiApiClient {
     const url = `${NCBI_EUTILS_BASE_URL}/${endpoint}${suffix}`;
 
     try {
-      logger.debug(`NCBI HTTP request: ${usePost ? 'POST' : 'GET'} ${url}`, {
-        endpoint,
-      } as never);
+      logger.debug(
+        `NCBI HTTP request: ${usePost ? 'POST' : 'GET'} ${url}`,
+        requestContextService.createRequestContext({ operation: 'NcbiHttpRequest', endpoint }),
+      );
 
       const response = usePost
         ? await this.postRequest(url, finalParams, options?.signal)
         : await this.getRequest(url, finalParams, options?.signal);
 
       if (!response.ok) {
-        let code: number;
-        if (response.status === 429) {
-          code = JsonRpcErrorCode.RateLimited;
-        } else if (response.status >= 500) {
-          code = JsonRpcErrorCode.ServiceUnavailable;
-        } else {
-          code = JsonRpcErrorCode.InvalidRequest;
-        }
-        throw new McpError(code, `NCBI API returned HTTP ${response.status}.`, {
-          endpoint,
-          status: response.status,
+        throw await httpErrorFromResponse(response, {
+          service: 'NCBI',
+          data: { endpoint },
         });
       }
 
@@ -67,9 +65,7 @@ export class NcbiApiClient {
       if (error instanceof McpError) throw error;
 
       const msg = error instanceof Error ? error.message : String(error);
-      throw new McpError(JsonRpcErrorCode.ServiceUnavailable, `NCBI request failed: ${msg}`, {
-        endpoint,
-      });
+      throw serviceUnavailable(`NCBI request failed: ${msg}`, { endpoint }, { cause: error });
     }
   }
 
@@ -101,34 +97,27 @@ export class NcbiApiClient {
       : timeoutSignal;
 
     try {
-      logger.debug(`NCBI external request: GET ${fullUrl}`, { url } as never);
+      logger.debug(
+        `NCBI external request: GET ${fullUrl}`,
+        requestContextService.createRequestContext({ operation: 'NcbiExternalRequest', url }),
+      );
       const response = await fetch(fullUrl, { signal });
 
       const body = await response.text();
 
       if (!response.ok) {
-        let code: number;
-        if (response.status === 429) {
-          code = JsonRpcErrorCode.RateLimited;
-        } else if (response.status >= 500) {
-          code = JsonRpcErrorCode.ServiceUnavailable;
-        } else {
-          code = JsonRpcErrorCode.InvalidRequest;
-        }
-        throw new McpError(
-          code,
-          `NCBI API returned HTTP ${response.status}: ${body.substring(0, 300)}`,
-          { url, status: response.status, body: body.substring(0, 500) },
-        );
+        throw await httpErrorFromResponse(response, {
+          service: 'NCBI',
+          captureBody: false,
+          data: { url, body: body.substring(0, 500) },
+        });
       }
 
       return body;
     } catch (error: unknown) {
       if (error instanceof McpError) throw error;
       const msg = error instanceof Error ? error.message : String(error);
-      throw new McpError(JsonRpcErrorCode.ServiceUnavailable, `NCBI request failed: ${msg}`, {
-        url,
-      });
+      throw serviceUnavailable(`NCBI request failed: ${msg}`, { url }, { cause: error });
     }
   }
 

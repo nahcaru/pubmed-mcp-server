@@ -12,6 +12,9 @@ import { NcbiResponseHandler } from '@/services/ncbi/response-handler.js';
 
 vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), notice: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  requestContextService: {
+    createRequestContext: vi.fn(() => ({ requestId: 'test' })),
+  },
 }));
 
 /** Tests use a generous deadline so only explicit deadline tests hit it. */

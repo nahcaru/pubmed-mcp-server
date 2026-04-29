@@ -8,8 +8,13 @@
  * @module src/services/unpaywall/unpaywall-service
  */
 
-import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { fetchWithTimeout, logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
+import { serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import {
+  fetchWithTimeout,
+  httpErrorFromResponse,
+  logger,
+  requestContextService,
+} from '@cyanheads/mcp-ts-core/utils';
 
 import { getServerConfig } from '@/config/server-config.js';
 import {
@@ -52,9 +57,11 @@ export class UnpaywallService {
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new McpError(JsonRpcErrorCode.ServiceUnavailable, `Unpaywall request failed: ${msg}`, {
-        doi: normalized,
-      });
+      throw serviceUnavailable(
+        `Unpaywall request failed: ${msg}`,
+        { doi: normalized },
+        { cause: error },
+      );
     }
 
     if (response.status === 404) return { kind: 'no-oa', reason: 'DOI unknown to Unpaywall' };
@@ -62,13 +69,11 @@ export class UnpaywallService {
 
     if (!response.ok) {
       const body = await response.text().catch(() => '');
-      throw new McpError(
-        response.status >= 500
-          ? JsonRpcErrorCode.ServiceUnavailable
-          : JsonRpcErrorCode.InvalidRequest,
-        `Unpaywall returned HTTP ${response.status}.`,
-        { doi: normalized, status: response.status, body: body.substring(0, 300) },
-      );
+      throw await httpErrorFromResponse(response, {
+        service: 'Unpaywall',
+        captureBody: false,
+        data: { doi: normalized, body: body.substring(0, 300) },
+      });
     }
 
     const data = (await response.json()) as UnpaywallResponse;
@@ -77,12 +82,16 @@ export class UnpaywallService {
     const location = data.best_oa_location ?? data.oa_locations?.[0];
     if (!location?.url) return { kind: 'no-oa', reason: 'OA flagged but no usable location URL' };
 
-    logger.debug('Unpaywall resolved DOI', {
-      doi: normalized,
-      hostType: location.host_type ?? null,
-      license: location.license ?? null,
-      version: location.version ?? null,
-    } as never);
+    logger.debug(
+      'Unpaywall resolved DOI',
+      requestContextService.createRequestContext({
+        operation: 'UnpaywallResolved',
+        doi: normalized,
+        hostType: location.host_type ?? null,
+        license: location.license ?? null,
+        version: location.version ?? null,
+      }),
+    );
 
     return { kind: 'found', location };
   }
@@ -101,10 +110,14 @@ export class UnpaywallService {
       try {
         return await this.fetchAs(pdfUrl, 'pdf', signal);
       } catch (pdfErr: unknown) {
-        logger.debug('Unpaywall PDF fetch failed; falling back to HTML URL', {
-          url: pdfUrl,
-          error: pdfErr instanceof Error ? pdfErr.message : String(pdfErr),
-        } as never);
+        logger.debug(
+          'Unpaywall PDF fetch failed; falling back to HTML URL',
+          requestContextService.createRequestContext({
+            operation: 'UnpaywallPdfFallback',
+            url: pdfUrl,
+            error: pdfErr instanceof Error ? pdfErr.message : String(pdfErr),
+          }),
+        );
       }
     }
 
@@ -136,21 +149,14 @@ export class UnpaywallService {
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw new McpError(
-        JsonRpcErrorCode.ServiceUnavailable,
-        `Unpaywall content fetch failed: ${msg}`,
-        { url },
-      );
+      throw serviceUnavailable(`Unpaywall content fetch failed: ${msg}`, { url }, { cause: error });
     }
 
     if (!response.ok) {
-      throw new McpError(
-        response.status >= 500
-          ? JsonRpcErrorCode.ServiceUnavailable
-          : JsonRpcErrorCode.InvalidRequest,
-        `Unpaywall content fetch returned HTTP ${response.status}.`,
-        { url, status: response.status },
-      );
+      throw await httpErrorFromResponse(response, {
+        service: 'Unpaywall content fetch',
+        data: { url },
+      });
     }
 
     const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
@@ -193,9 +199,13 @@ export function initUnpaywallService(): void {
     return;
   }
   _service = new UnpaywallService(config.unpaywallEmail, config.unpaywallTimeoutMs);
-  logger.info('Unpaywall service initialized.', {
-    timeoutMs: config.unpaywallTimeoutMs,
-  } as never);
+  logger.info(
+    'Unpaywall service initialized.',
+    requestContextService.createRequestContext({
+      operation: 'UnpaywallInit',
+      timeoutMs: config.unpaywallTimeoutMs,
+    }),
+  );
 }
 
 /** Returns the initialized service, or `undefined` when the fallback is disabled. */

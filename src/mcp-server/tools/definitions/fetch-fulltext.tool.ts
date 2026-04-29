@@ -8,6 +8,7 @@
  */
 
 import { type Context, tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { htmlExtractor, pdfParser } from '@cyanheads/mcp-ts-core/utils';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractDoi, extractPmid } from '@/services/ncbi/parsing/article-parser.js';
@@ -26,6 +27,7 @@ import type {
 } from '@/services/unpaywall/types.js';
 import { getUnpaywallService } from '@/services/unpaywall/unpaywall-service.js';
 import { conceptMeta, EDAM_DATA_RETRIEVAL, SCHEMA_SCHOLARLY_ARTICLE } from './_concepts.js';
+import { NCBI_SERVICE_ERRORS } from './_error-contracts.js';
 import { pmidStringSchema } from './_schemas.js';
 
 function normalizePmcId(id: string): string {
@@ -191,6 +193,15 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/fetch-fulltext.tool.ts',
 
+  errors: [
+    ...NCBI_SERVICE_ERRORS,
+    {
+      reason: 'invalid_pmc_efetch_response',
+      code: JsonRpcErrorCode.SerializationError,
+      when: 'PMC EFetch returned a payload missing the pmc-articleset wrapper.',
+    },
+  ] as const,
+
   input: z
     .object({
       pmcids: z
@@ -298,7 +309,12 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       );
 
       const articleSet = findOne(xmlData, 'pmc-articleset');
-      if (!articleSet) throw new Error('Invalid PMC EFetch response: missing pmc-articleset');
+      if (!articleSet)
+        throw ctx.fail(
+          'invalid_pmc_efetch_response',
+          'Invalid PMC EFetch response: missing pmc-articleset',
+          { requestedPmcIdCount: pmcIds.length },
+        );
 
       let parsed = findAll(articleSet, 'article').map(parsePmcArticle);
 

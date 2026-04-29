@@ -241,13 +241,17 @@ describe('fetchFulltextTool', () => {
     ]);
   });
 
-  it('throws when PMC EFetch response is missing the article set', async () => {
+  it('throws when PMC EFetch response is missing the article set with reason "invalid_pmc_efetch_response"', async () => {
     mockEFetch.mockResolvedValue([]);
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: fetchFulltextTool.errors });
     const input = fetchFulltextTool.input.parse({ pmcids: ['PMC1'] });
 
-    await expect(fetchFulltextTool.handler(input, ctx)).rejects.toThrow(/missing pmc-articleset/);
+    const promise = fetchFulltextTool.handler(input, ctx);
+    await expect(promise).rejects.toThrow(/missing pmc-articleset/);
+    await expect(promise).rejects.toMatchObject({
+      data: { reason: 'invalid_pmc_efetch_response' },
+    });
   });
 
   describe('Unpaywall fallback', () => {

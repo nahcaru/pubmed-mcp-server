@@ -13,6 +13,9 @@ vi.mock('@cyanheads/mcp-ts-core/utils', () => ({
     warning: vi.fn(),
     error: vi.fn(),
   },
+  requestContextService: {
+    createRequestContext: vi.fn(() => ({ requestId: 'test' })),
+  },
 }));
 
 describe('NcbiRequestQueue', () => {

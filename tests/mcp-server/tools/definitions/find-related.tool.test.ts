@@ -59,14 +59,16 @@ describe('findRelatedTool', () => {
     expect(result.totalFound).toBe(0);
   });
 
-  it('throws on ELink error', async () => {
+  it('throws on ELink error with reason "elink_error"', async () => {
     mockELink.mockResolvedValue({
       eLinkResult: [{ ERROR: 'Invalid PMID' }],
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: findRelatedTool.errors });
     const input = findRelatedTool.input.parse({ pmid: '12345' });
-    await expect(findRelatedTool.handler(input, ctx)).rejects.toThrow(/ELink error/);
+    const promise = findRelatedTool.handler(input, ctx);
+    await expect(promise).rejects.toThrow(/ELink error/);
+    await expect(promise).rejects.toMatchObject({ data: { reason: 'elink_error' } });
   });
 
   it('sorts similar articles by score and enriches them with summaries', async () => {

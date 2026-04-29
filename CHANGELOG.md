@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.5](changelog/2.6.x/2.6.5.md) — 2026-04-28 · ⚠️ Breaking
+
+Typed error contracts on NCBI tools, service-layer logger metadata typed end-to-end, fuzz coverage for all 9 tools, plus DX renames on `pubmed_format_citations` (`styles` → `format`) and `pubmed_lookup_mesh` (`term` → `query`).
+
 ## [2.6.4](changelog/2.6.x/2.6.4.md) — 2026-04-26
 
 Description audit follow-up to v2.6.3 — cross-field constraints surface in tool descriptions, and `pubmed_format_citations` no longer throws on zero matches.

@@ -5,6 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { parseFullArticle } from '@/services/ncbi/parsing/article-parser.js';
 import { ensureArray } from '@/services/ncbi/parsing/xml-helpers.js';
@@ -15,6 +16,7 @@ import {
   EDAM_PUBMED_ID,
   SCHEMA_SCHOLARLY_ARTICLE,
 } from './_concepts.js';
+import { NCBI_SERVICE_ERRORS } from './_error-contracts.js';
 import { pmidStringSchema } from './_schemas.js';
 
 const AuthorSchema = z
@@ -116,6 +118,15 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/fetch-articles.tool.ts',
 
+  errors: [
+    ...NCBI_SERVICE_ERRORS,
+    {
+      reason: 'invalid_efetch_response',
+      code: JsonRpcErrorCode.SerializationError,
+      when: 'NCBI EFetch returned a payload missing the PubmedArticleSet wrapper.',
+    },
+  ] as const,
+
   input: z.object({
     pmids: z.array(pmidStringSchema).min(1).max(200).describe('PubMed IDs to fetch'),
     includeMesh: z.boolean().default(true).describe('Include MeSH terms'),
@@ -140,7 +151,11 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
     );
 
     if (!xmlData || !('PubmedArticleSet' in xmlData)) {
-      throw new Error('Invalid EFetch response from NCBI: missing PubmedArticleSet');
+      throw ctx.fail(
+        'invalid_efetch_response',
+        'Invalid EFetch response from NCBI: missing PubmedArticleSet',
+        { requestedPmids: input.pmids.length },
+      );
     }
 
     const rawArticles = xmlData.PubmedArticleSet?.PubmedArticle;
