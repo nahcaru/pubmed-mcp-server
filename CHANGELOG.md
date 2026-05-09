@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.8](changelog/2.6.x/2.6.8.md) — 2026-05-09
+
+Fix `server.json` top-level `version` field missed in v2.6.7 — kept the registry stuck at 2.6.6 even though the two `packages[*].version` entries advanced. No code changes.
+
 ## [2.6.7](changelog/2.6.x/2.6.7.md) — 2026-05-09
 
 Adopts `@cyanheads/mcp-ts-core` 0.8.6 → 0.8.19 — HTTP SSE per-request leak fix, OTel double-write fix, `ctx.sessionId` / `ctx.auth.token`. Node engine ≥24.0.0; Dockerfile pinned to `oven/bun:1.3`.
