@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.7](changelog/2.6.x/2.6.7.md) — 2026-05-09
+
+Adopts `@cyanheads/mcp-ts-core` 0.8.6 → 0.8.19 — HTTP SSE per-request leak fix, OTel double-write fix, `ctx.sessionId` / `ctx.auth.token`. Node engine ≥24.0.0; Dockerfile pinned to `oven/bun:1.3`.
+
 ## [2.6.6](changelog/2.6.x/2.6.6.md) — 2026-04-29 · ⚠️ Breaking
 
 Recovery hints on every error contract; `pubmed_convert_ids` input renamed `idtype` → `idType` for camelCase parity; adopts `@cyanheads/mcp-ts-core` v0.8.6.

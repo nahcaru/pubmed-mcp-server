@@ -19,7 +19,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pubmed-mcp-server",
       "runtimeHint": "bun",
-      "version": "2.6.6",
+      "version": "2.6.7",
       "packageArguments": [
         {
           "type": "positional",
@@ -66,7 +66,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pubmed-mcp-server",
       "runtimeHint": "bun",
-      "version": "2.6.6",
+      "version": "2.6.7",
       "packageArguments": [
         {
           "type": "positional",

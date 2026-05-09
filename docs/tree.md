@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-04-29 23:19:48
+Generated on: 2026-05-09 08:47:31
 
 ```text
 pubmed-mcp-server/
@@ -20,6 +20,8 @@ pubmed-mcp-server/
 │       │   └── SKILL.md
 │       ├── api-auth/
 │       │   └── SKILL.md
+│       ├── api-canvas/
+│       │   └── SKILL.md
 │       ├── api-config/
 │       │   └── SKILL.md
 │       ├── api-context/
@@ -33,6 +35,8 @@ pubmed-mcp-server/
 │       │   │   ├── graph.md
 │       │   │   ├── llm.md
 │       │   │   └── speech.md
+│       │   └── SKILL.md
+│       ├── api-telemetry/
 │       │   └── SKILL.md
 │       ├── api-testing/
 │       │   └── SKILL.md
@@ -94,6 +98,8 @@ pubmed-mcp-server/
 │       │   └── SKILL.md
 │       ├── setup/
 │       │   └── SKILL.md
+│       ├── tool-defs-analysis/
+│       │   └── SKILL.md
 │       └── writing-humanizer/
 │           └── SKILL.md
 ├── .github/
@@ -153,6 +159,8 @@ pubmed-mcp-server/
 │   │   └── SKILL.md
 │   ├── api-auth/
 │   │   └── SKILL.md
+│   ├── api-canvas/
+│   │   └── SKILL.md
 │   ├── api-config/
 │   │   └── SKILL.md
 │   ├── api-context/
@@ -166,6 +174,8 @@ pubmed-mcp-server/
 │   │   │   ├── graph.md
 │   │   │   ├── llm.md
 │   │   │   └── speech.md
+│   │   └── SKILL.md
+│   ├── api-telemetry/
 │   │   └── SKILL.md
 │   ├── api-testing/
 │   │   └── SKILL.md
@@ -200,7 +210,9 @@ pubmed-mcp-server/
 │   │   └── SKILL.md
 │   ├── security-pass/
 │   │   └── SKILL.md
-│   └── setup/
+│   ├── setup/
+│   │   └── SKILL.md
+│   └── tool-defs-analysis/
 │       └── SKILL.md
 ├── src/
 │   ├── config/
