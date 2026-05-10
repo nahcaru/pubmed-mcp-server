@@ -254,6 +254,20 @@ describe('fetchFulltextTool', () => {
     });
   });
 
+  it('invalid_pmc_efetch_response carries the contract recovery hint on the wire', async () => {
+    mockEFetch.mockResolvedValue([]);
+
+    const ctx = createMockContext({ errors: fetchFulltextTool.errors });
+    const input = fetchFulltextTool.input.parse({ pmcids: ['PMC1'] });
+
+    await expect(fetchFulltextTool.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_pmc_efetch_response',
+        recovery: { hint: expect.stringMatching(/.{20,}/) },
+      },
+    });
+  });
+
   describe('Unpaywall fallback', () => {
     beforeEach(() => {
       mockGetUnpaywallService.mockReturnValue({
@@ -326,6 +340,21 @@ describe('fetchFulltextTool', () => {
       expect(result.totalReturned).toBe(0);
       expect(result.unavailable).toEqual([
         { pmid: '42', reason: 'no-oa', detail: 'No open-access copy indexed' },
+      ]);
+    });
+
+    it('returns service-error when Unpaywall lookup fails', async () => {
+      mockIdConvert.mockResolvedValue([{ 'requested-id': '42', pmid: '42' }]);
+      mockEFetchBy({ pubmedDois: { '42': '10.1000/example' } });
+      mockUnpaywallResolve.mockRejectedValue(new Error('Unpaywall 503'));
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ pmids: ['42'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(mockUnpaywallFetchContent).not.toHaveBeenCalled();
+      expect(result.unavailable).toEqual([
+        { pmid: '42', reason: 'service-error', detail: 'Unpaywall 503' },
       ]);
     });
 
@@ -452,6 +481,52 @@ describe('fetchFulltextTool', () => {
       ]);
     });
 
+    it('flags parse-failed when PDF extraction produces empty text', async () => {
+      mockIdConvert.mockResolvedValue([{ 'requested-id': '42', pmid: '42' }]);
+      mockEFetchBy({ pubmedDois: { '42': '10.1000/example' } });
+      mockUnpaywallResolve.mockResolvedValue({
+        kind: 'found',
+        location: { url_for_pdf: 'https://repo.example.org/paper.pdf' },
+      });
+      mockUnpaywallFetchContent.mockResolvedValue({
+        kind: 'pdf',
+        fetchedUrl: 'https://repo.example.org/paper.pdf',
+        body: new Uint8Array([0x25, 0x50, 0x44, 0x46]),
+      });
+      mockPdfExtractText.mockResolvedValue({ totalPages: 3, text: '   ' });
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ pmids: ['42'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(result.unavailable).toEqual([
+        { pmid: '42', reason: 'parse-failed', detail: expect.stringContaining('PDF extraction') },
+      ]);
+    });
+
+    it('flags parse-failed when content extraction throws', async () => {
+      mockIdConvert.mockResolvedValue([{ 'requested-id': '42', pmid: '42' }]);
+      mockEFetchBy({ pubmedDois: { '42': '10.1000/example' } });
+      mockUnpaywallResolve.mockResolvedValue({
+        kind: 'found',
+        location: { url: 'https://repo.example.org/paper' },
+      });
+      mockUnpaywallFetchContent.mockResolvedValue({
+        kind: 'html',
+        fetchedUrl: 'https://repo.example.org/paper',
+        body: '<html><body>broken</body></html>',
+      });
+      mockHtmlExtract.mockRejectedValue(new Error('extractor crashed'));
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ pmids: ['42'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(result.unavailable).toEqual([
+        { pmid: '42', reason: 'parse-failed', detail: 'extractor crashed' },
+      ]);
+    });
+
     it('combines PMC hits with Unpaywall fallback results in a single response', async () => {
       mockIdConvert.mockResolvedValue([
         { 'requested-id': '1', pmid: '1', pmcid: 'PMC100' },
@@ -574,6 +649,59 @@ describe('fetchFulltextTool', () => {
       expect(text).toContain('Word Count:** 1200');
       expect(text).toContain('courtesy of Unpaywall');
       expect(text).toContain('Main body');
+    });
+
+    describe('empty-result recovery guidance (issue #33)', () => {
+      it('emits a recovery blockquote when totalReturned is 0', () => {
+        const blocks = fetchFulltextTool.format!({
+          articles: [],
+          totalReturned: 0,
+          unavailable: [{ pmid: '31295471', reason: 'no-doi' }],
+        });
+
+        const text = blocks[0]?.text ?? '';
+        expect(text).toContain('**Articles Returned:** 0');
+        expect(text).toContain('No full-text articles returned');
+        expect(text).toContain('open-access');
+        expect(text).toContain('PMC');
+        expect(text).toContain('pubmed_fetch_articles');
+      });
+
+      it('renders the unavailable list before the recovery blockquote', () => {
+        const blocks = fetchFulltextTool.format!({
+          articles: [],
+          totalReturned: 0,
+          unavailable: [{ pmid: '31295471', reason: 'no-doi' }],
+        });
+
+        const text = blocks[0]?.text ?? '';
+        const unavailableIdx = text.indexOf('Unavailable PMIDs');
+        const recoveryIdx = text.indexOf('No full-text articles returned');
+        expect(unavailableIdx).toBeGreaterThan(-1);
+        expect(recoveryIdx).toBeGreaterThan(unavailableIdx);
+      });
+
+      it('does NOT emit the recovery blockquote when articles are present', () => {
+        const blocks = fetchFulltextTool.format!({
+          articles: [
+            {
+              source: 'pmc',
+              pmcId: 'PMC1',
+              pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1/',
+              title: 'Real Article',
+              authors: [],
+              affiliations: [],
+              keywords: [],
+              sections: [],
+              references: [],
+            },
+          ],
+          totalReturned: 1,
+        });
+
+        const text = blocks[0]?.text ?? '';
+        expect(text).not.toContain('No full-text articles returned');
+      });
     });
 
     it('formats an unpaywall article (pdf-text) with page count', () => {

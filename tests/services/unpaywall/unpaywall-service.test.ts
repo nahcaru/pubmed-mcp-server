@@ -116,6 +116,19 @@ describe('UnpaywallService.resolve', () => {
 
     await expect(service.resolve('10.1000/example')).rejects.toThrow(/connect ETIMEDOUT/);
   });
+
+  it('network error on resolve stamps reason unpaywall_unreachable + recovery on the wire', async () => {
+    mockFetchWithTimeout.mockRejectedValue(new Error('connect ETIMEDOUT'));
+    const service = new UnpaywallService('oa@example.com', 20000);
+
+    await expect(service.resolve('10.1000/example')).rejects.toMatchObject({
+      data: {
+        reason: 'unpaywall_unreachable',
+        doi: '10.1000/example',
+        recovery: { hint: expect.stringContaining('Unpaywall was unreachable') },
+      },
+    });
+  });
 });
 
 describe('UnpaywallService.fetchContent', () => {
@@ -176,6 +189,19 @@ describe('UnpaywallService.fetchContent', () => {
 
     expect(content.kind).toBe('html');
     expect(content.body).toContain('hi');
+  });
+
+  it('network error on fetchContent stamps reason unpaywall_unreachable + recovery on the wire', async () => {
+    mockFetchWithTimeout.mockRejectedValue(new Error('connect ECONNRESET'));
+    const service = new UnpaywallService('oa@example.com', 20000);
+
+    await expect(service.fetchContent({ url: 'https://example.org/paper' })).rejects.toMatchObject({
+      data: {
+        reason: 'unpaywall_unreachable',
+        url: 'https://example.org/paper',
+        recovery: { hint: expect.stringContaining('Unpaywall was unreachable') },
+      },
+    });
   });
 });
 

@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-09 08:47:31
+Generated on: 2026-05-10 10:13:00
 
 ```text
 pubmed-mcp-server/
@@ -227,7 +227,6 @@ pubmed-mcp-server/
 │   │   └── tools/
 │   │       └── definitions/
 │   │           ├── _concepts.ts
-│   │           ├── _error-contracts.ts
 │   │           ├── _schemas.ts
 │   │           ├── convert-ids.tool.ts
 │   │           ├── fetch-articles.tool.ts
@@ -253,9 +252,10 @@ pubmed-mcp-server/
 │   │   │   ├── request-queue.ts
 │   │   │   ├── response-handler.ts
 │   │   │   └── types.ts
-│   │   └── unpaywall/
-│   │       ├── types.ts
-│   │       └── unpaywall-service.ts
+│   │   ├── unpaywall/
+│   │   │   ├── types.ts
+│   │   │   └── unpaywall-service.ts
+│   │   └── error-contracts.ts
 │   └── index.ts
 ├── tests/
 │   ├── config/
@@ -293,8 +293,9 @@ pubmed-mcp-server/
 │   │   │   ├── ncbi-service.test.ts
 │   │   │   ├── request-queue.test.ts
 │   │   │   └── response-handler.test.ts
-│   │   └── unpaywall/
-│   │       └── unpaywall-service.test.ts
+│   │   ├── unpaywall/
+│   │   │   └── unpaywall-service.test.ts
+│   │   └── error-contracts.test.ts
 │   ├── tools/
 │   └── index.test.ts
 ├── .dockerignore

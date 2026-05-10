@@ -5,6 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { ensureArray, getText } from '@/services/ncbi/parsing/xml-helpers.js';
 import {
@@ -100,6 +101,8 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
   ]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/lookup-mesh.tool.ts',
+
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     query: z.string().min(1).describe('MeSH descriptor name or free-text term to look up'),

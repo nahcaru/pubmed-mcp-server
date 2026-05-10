@@ -5,10 +5,11 @@
  * @module src/services/ncbi/response-handler
  */
 
-import { serializationError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { notFound, serializationError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 import { XMLParser as FastXmlParser, XMLValidator } from 'fast-xml-parser';
 
+import { recoveryFor } from '@/services/error-contracts.js';
 import type { NcbiRequestOptions } from './types.js';
 
 /**
@@ -58,6 +59,17 @@ const ERROR_PATHS = [
   'eSummaryResult.ERROR',
   'PubmedArticleSet.ErrorList.CannotRetrievePMID',
   'ERROR',
+];
+
+/**
+ * NCBI error messages indicating the requested record doesn't exist (permanent
+ * failure). Throwing NotFound for these prevents the retry loop from hammering
+ * NCBI on what is fundamentally a "no such record" response.
+ */
+const NCBI_NOT_FOUND_PATTERNS: RegExp[] = [
+  /cannot get document summary/i,
+  /UID=\S+:\s*not found/i,
+  /Empty id list/i,
 ];
 
 const WARNING_PATHS = [
@@ -251,8 +263,13 @@ export class NcbiResponseHandler {
   }
 
   /**
-   * Extract a structured error from a parsed NCBI XML body and throw it via
-   * `serviceUnavailable()`. Never returns.
+   * Extract a structured error from a parsed NCBI XML body and throw it as
+   * `notFound()` for permanent "no such record" responses or `serviceUnavailable()`
+   * for transient backend failures. Never returns.
+   *
+   * NCBI returns "cannot get document summary" / "Empty id list" for invalid
+   * UIDs — these are permanent (the record doesn't exist), so we surface them
+   * as NotFound so the retry loop short-circuits instead of hammering NCBI.
    */
   private throwNcbiError(parsedXml: Record<string, unknown>, endpoint: string): never {
     const errorMessages = this.extractNcbiErrorMessages(parsedXml);
@@ -264,9 +281,21 @@ export class NcbiResponseHandler {
         errors: errorMessages,
       }),
     );
+
+    if (errorMessages.some((msg) => NCBI_NOT_FOUND_PATTERNS.some((p) => p.test(msg)))) {
+      throw notFound(`NCBI API Error: ${errorMessages.join('; ')}`, {
+        reason: 'ncbi_resource_not_found',
+        endpoint,
+        ncbiErrors: errorMessages,
+        ...recoveryFor('ncbi_resource_not_found'),
+      });
+    }
+
     throw serviceUnavailable(`NCBI API Error: ${errorMessages.join('; ')}`, {
+      reason: 'ncbi_unreachable',
       endpoint,
       ncbiErrors: errorMessages,
+      ...recoveryFor('ncbi_unreachable'),
     });
   }
 
@@ -321,24 +350,24 @@ export class NcbiResponseHandler {
         }),
       );
 
+      const isHtml = /^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(responseText);
+      if (isHtml) {
+        logger.warning(
+          'NCBI returned HTML instead of XML (likely rate-limited).',
+          requestContextService.createRequestContext({
+            operation: 'NcbiHtmlResponse',
+            endpoint,
+          }),
+        );
+        throw serviceUnavailable(
+          'NCBI API returned an HTML response instead of XML — likely rate-limited.',
+          { reason: 'ncbi_unreachable', endpoint, ...recoveryFor('ncbi_unreachable') },
+        );
+      }
+
       const xmlForValidation = responseText.replace(/<!DOCTYPE[^>]*>/gi, '');
       const validationResult = XMLValidator.validate(xmlForValidation);
       if (validationResult !== true) {
-        const isHtml = /^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(responseText);
-        if (isHtml) {
-          logger.warning(
-            'NCBI returned HTML instead of XML (likely rate-limited).',
-            requestContextService.createRequestContext({
-              operation: 'NcbiHtmlResponse',
-              endpoint,
-            }),
-          );
-          throw serviceUnavailable(
-            'NCBI API returned an HTML response instead of XML — likely rate-limited.',
-            { endpoint },
-          );
-        }
-
         logger.error(
           'Invalid XML response from NCBI.',
           requestContextService.createRequestContext({
@@ -348,8 +377,10 @@ export class NcbiResponseHandler {
           }),
         );
         throw serializationError('Received invalid XML from NCBI.', {
+          reason: 'ncbi_invalid_response',
           endpoint,
           responseSnippet: responseText.substring(0, 200),
+          ...recoveryFor('ncbi_invalid_response'),
         });
       }
 
@@ -385,9 +416,11 @@ export class NcbiResponseHandler {
         throw serializationError(
           `Failed to parse XML response from NCBI: ${parserError}`,
           {
+            reason: 'ncbi_invalid_response',
             endpoint,
             parserError,
             responseSnippet: responseText.substring(0, 200),
+            ...recoveryFor('ncbi_invalid_response'),
           },
           { cause: error },
         );
@@ -432,7 +465,12 @@ export class NcbiResponseHandler {
       } catch (error: unknown) {
         throw serializationError(
           'Failed to parse NCBI JSON response.',
-          { endpoint, responseSnippet: responseText.substring(0, 200) },
+          {
+            reason: 'ncbi_invalid_response',
+            endpoint,
+            responseSnippet: responseText.substring(0, 200),
+            ...recoveryFor('ncbi_invalid_response'),
+          },
           { cause: error },
         );
       }
@@ -447,9 +485,19 @@ export class NcbiResponseHandler {
             error: errorMessage,
           }),
         );
+        if (NCBI_NOT_FOUND_PATTERNS.some((p) => p.test(errorMessage))) {
+          throw notFound(`NCBI API Error: ${errorMessage}`, {
+            reason: 'ncbi_resource_not_found',
+            endpoint,
+            ncbiErrors: [errorMessage],
+            ...recoveryFor('ncbi_resource_not_found'),
+          });
+        }
         throw serviceUnavailable(`NCBI API Error: ${errorMessage}`, {
+          reason: 'ncbi_unreachable',
           endpoint,
           ncbiError: errorMessage,
+          ...recoveryFor('ncbi_unreachable'),
         });
       }
 

@@ -6,6 +6,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { parseFullArticle } from '@/services/ncbi/parsing/article-parser.js';
 import { ensureArray } from '@/services/ncbi/parsing/xml-helpers.js';
@@ -16,7 +17,6 @@ import {
   EDAM_PUBMED_ID,
   SCHEMA_SCHOLARLY_ARTICLE,
 } from './_concepts.js';
-import { NCBI_SERVICE_ERRORS } from './_error-contracts.js';
 import { pmidStringSchema } from './_schemas.js';
 
 const AuthorSchema = z

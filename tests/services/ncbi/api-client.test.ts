@@ -138,6 +138,42 @@ describe('NcbiApiClient', () => {
     expect(mockFetch).toHaveBeenCalledOnce();
   });
 
+  it('wrapped non-McpError carries reason ncbi_unreachable + recovery on the wire', async () => {
+    mockFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+    const client = new NcbiApiClient(baseConfig);
+
+    await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
+      data: {
+        reason: 'ncbi_unreachable',
+        endpoint: 'esearch',
+        recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+      },
+    });
+  });
+
+  it('wrapped non-McpError on external request also carries reason + recovery', async () => {
+    // makeExternalRequest uses raw fetch (not fetchWithTimeout), so mock the global.
+    const globalFetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockRejectedValueOnce(new Error('ETIMEDOUT'));
+    const client = new NcbiApiClient(baseConfig);
+
+    try {
+      await expect(
+        client.makeExternalRequest('https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/', {
+          ids: '10.1093/nar/gks1195',
+        }),
+      ).rejects.toMatchObject({
+        data: {
+          reason: 'ncbi_unreachable',
+          recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+        },
+      });
+    } finally {
+      globalFetchSpy.mockRestore();
+    }
+  });
+
   it('forwards options.signal to fetchWithTimeout on GET', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
     const controller = new AbortController();

@@ -5,12 +5,13 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { McpError } from '@cyanheads/mcp-ts-core/errors';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractBriefSummaries } from '@/services/ncbi/parsing/esummary-parser.js';
 import { ensureArray } from '@/services/ncbi/parsing/xml-helpers.js';
+import type { ParsedBriefSummary } from '@/services/ncbi/types.js';
 import { conceptMeta, EDAM_DATA_RETRIEVAL, SCHEMA_SCHOLARLY_ARTICLE } from './_concepts.js';
-import { NCBI_SERVICE_ERRORS } from './_error-contracts.js';
 import { pmidStringSchema } from './_schemas.js';
 
 // ─── ELink XML types ─────────────────────────────────────────────────────────
@@ -50,15 +51,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/find-related.tool.ts',
 
-  errors: [
-    ...NCBI_SERVICE_ERRORS,
-    {
-      reason: 'elink_error',
-      code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'NCBI ELink returned an <ERROR> payload for this PMID/relationship pair.',
-      recovery: 'Verify the source PMID exists or try a different relationship type.',
-    },
-  ] as const,
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     pmid: pmidStringSchema.describe('Source PubMed ID'),
@@ -98,7 +91,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
       .string()
       .optional()
       .describe(
-        'Optional guidance when results are empty due to a known limitation — e.g. references for a non-PMC source. Absent on successful result pages.',
+        'Optional guidance when results are empty — e.g. invalid source PMID, or references requested for a non-PMC source. Absent on successful result pages.',
       ),
   }),
 
@@ -133,16 +126,16 @@ export const findRelatedTool = tool('pubmed_find_related', {
     const eLinkResultsArray = ensureArray(eLinkResult?.eLinkResult);
     const firstResult = eLinkResultsArray[0] as ELinkResultItem | undefined;
 
+    // NCBI ELink stamps `<ERROR>` for invalid PMIDs alongside an absent or empty
+    // LinkSet — the same observable shape as a valid PMID with no related links.
+    // Fall through to the empty-LinkSet path below; the ESummary disambiguation
+    // there distinguishes "unknown PMID" from "valid PMID, no relations" and
+    // produces a notice in either case. Log the raw payload for telemetry.
     if (firstResult?.ERROR) {
-      const detail =
-        typeof firstResult.ERROR === 'string'
-          ? firstResult.ERROR
-          : 'NCBI returned a non-string ERROR payload';
-      throw ctx.fail('elink_error', `ELink error: ${detail}`, {
+      ctx.log.debug('NCBI ELink returned <ERROR>; disambiguating via ESummary', {
         pmid: input.pmid,
         relationship: input.relationship,
         ncbiError: firstResult.ERROR,
-        ...ctx.recoveryFor('elink_error'),
       });
     }
 
@@ -172,26 +165,47 @@ export const findRelatedTool = tool('pubmed_find_related', {
 
     const totalFound = foundPmids.length;
     if (foundPmids.length === 0) {
-      // NCBI's pubmed_pubmed_refs ELink only resolves reference lists for
-      // PMC-indexed sources, so a valid PMID without a PMCID looks identical
-      // to "this article cites nothing". Look up the source's PMCID so the
-      // caller gets a relationship-aware recovery hint.
-      let notice: string | undefined;
-      if (input.relationship === 'references') {
-        try {
-          const summaryResult = await ncbi.eSummary(
-            { db: 'pubmed', id: input.pmid },
-            { signal: ctx.signal },
-          );
-          const summaries = await extractBriefSummaries(summaryResult);
-          const sourcePmcId = summaries[0]?.pmcId;
-          notice = sourcePmcId
-            ? `No reference list found in PMC for PMID ${input.pmid} (PMCID ${sourcePmcId}).`
-            : `Reference lists require the source article to be indexed in PMC. PMID ${input.pmid} has no PMCID — references unavailable. Use pubmed_fetch_articles to inspect the article record, or try relationship: "similar" / "cited_by".`;
-        } catch (err) {
-          ctx.log.debug('Failed to look up source PMCID for references hint', { err });
+      // ELink returns an empty LinkSet for both invalid source PMIDs and valid
+      // PMIDs that simply have no related articles, so a single ESummary on the
+      // source disambiguates the two cases for every relationship type. NCBI's
+      // pubmed_pubmed_refs ELink also only resolves references for PMC-indexed
+      // sources, so the same lookup yields the PMCID for the references hint.
+      let sourceSummary: ParsedBriefSummary | undefined;
+      let sourceConfirmedMissing = false;
+      try {
+        const summaryResult = await ncbi.eSummary(
+          { db: 'pubmed', id: input.pmid },
+          { signal: ctx.signal },
+        );
+        const summaries = await extractBriefSummaries(summaryResult);
+        sourceSummary = summaries[0];
+        // ESummary succeeded but returned nothing parseable — PMID is unknown.
+        if (!sourceSummary?.title) sourceConfirmedMissing = true;
+      } catch (err) {
+        ctx.log.debug('Source PMID ESummary failed', { err });
+        // Key off the contract reason rather than the JSON-RPC code: the service
+        // layer stamps `ncbi_resource_not_found` for "unknown UID" responses,
+        // while transient transport failures keep their ServiceUnavailable code
+        // with no such reason.
+        const reason =
+          err instanceof McpError
+            ? (err.data as { reason?: string } | undefined)?.reason
+            : undefined;
+        if (reason === 'ncbi_resource_not_found') {
+          sourceConfirmedMissing = true;
         }
       }
+
+      let notice: string | undefined;
+      if (sourceConfirmedMissing) {
+        notice = `Source PMID ${input.pmid} not found in PubMed. Verify the ID with \`pubmed_fetch_articles\` or \`pubmed_search_articles\`.`;
+      } else if (sourceSummary?.title && input.relationship === 'references') {
+        const sourcePmcId = sourceSummary.pmcId;
+        notice = sourcePmcId
+          ? `No reference list found in PMC for PMID ${input.pmid} (PMCID ${sourcePmcId}).`
+          : `Reference lists require the source article to be indexed in PMC. PMID ${input.pmid} has no PMCID — references unavailable. Use pubmed_fetch_articles to inspect the article record, or try relationship: "similar" / "cited_by".`;
+      }
+
       return {
         sourcePmid: input.pmid,
         relationship: input.relationship,

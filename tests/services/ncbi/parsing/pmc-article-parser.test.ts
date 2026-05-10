@@ -61,6 +61,15 @@ describe('extractJatsAuthors', () => {
     expect(authors).toHaveLength(1);
     expect(authors[0]?.lastName).toBe('Author');
   });
+
+  it('accepts author contributors without contrib-type and skips empty collab names', () => {
+    const group = el('contrib-group', [
+      el('contrib', [el('collab', [t('   ')])], { '@_contrib-type': 'author' }),
+      el('contrib', [el('name', [el('surname', [t('Untyped')])])]),
+    ]);
+
+    expect(extractJatsAuthors(group)).toEqual([{ lastName: 'Untyped' }]);
+  });
 });
 
 describe('extractBodySections', () => {
@@ -97,6 +106,31 @@ describe('extractBodySections', () => {
     const sections = extractBodySections(body);
     expect(sections[0]?.subsections).toHaveLength(1);
     expect(sections[0]?.subsections?.[0]?.title).toBe('Subresult');
+  });
+
+  it('flushes direct paragraphs before and after structured sections', () => {
+    const body = el('body', [
+      el('p', [t('Opening paragraph.')]),
+      el('p', [t('Second opening paragraph.')]),
+      el('sec', [el('title', [t('Methods')]), el('p', [t('Methods text.')])]),
+      el('p', [t('Trailing paragraph.')]),
+    ]);
+
+    const sections = extractBodySections(body);
+    expect(sections).toEqual([
+      { text: 'Opening paragraph.\n\nSecond opening paragraph.' },
+      { title: 'Methods', text: 'Methods text.' },
+      { text: 'Trailing paragraph.' },
+    ]);
+  });
+
+  it('omits empty sections', () => {
+    const body = el('body', [
+      el('sec', [el('title', [t('Empty')])]),
+      el('sec', [el('title', [t('Populated')]), el('p', [t('Text.')])]),
+    ]);
+
+    expect(extractBodySections(body)).toEqual([{ title: 'Populated', text: 'Text.' }]);
   });
 
   it('preserves document order across mixed inline content (regression for issue #19)', () => {
@@ -149,6 +183,17 @@ describe('extractReferences', () => {
     const refs = extractReferences(back);
     expect(refs).toHaveLength(1);
     expect(refs[0]?.citation).toBe('Citation text here.');
+  });
+
+  it('skips references without citation text', () => {
+    const back = el('back', [
+      el('ref-list', [
+        el('ref', [el('label', [t('1')])]),
+        el('ref', [el('mixed-citation', [t('   ')])]),
+      ]),
+    ]);
+
+    expect(extractReferences(back)).toEqual([]);
   });
 });
 
@@ -225,5 +270,91 @@ describe('parsePmcArticle', () => {
     ]);
     const result = parsePmcArticle(article);
     expect(result.abstract).toBe('Candidates include NF1 and MED12, as well as NF2, CUL3.');
+  });
+
+  it('falls back to print publication dates and direct abstract text', () => {
+    const article = el('article', [
+      el('front', [
+        el('article-meta', [
+          el('article-id', [t('PMC100')], { '@_pub-id-type': 'pmcid' }),
+          el('pub-date', [el('year', [t('2022')]), el('month', [t('11')]), el('day', [t('05')])], {
+            '@_pub-type': 'ppub',
+          }),
+          el('abstract', [t('Plain abstract text.')]),
+        ]),
+      ]),
+    ]);
+
+    const result = parsePmcArticle(article);
+    expect(result.publicationDate).toEqual({ year: '2022', month: '11', day: '05' });
+    expect(result.abstract).toBe('Plain abstract text.');
+  });
+
+  it('parses rich JATS metadata without fabricating missing fields', () => {
+    const article = el(
+      'article',
+      [
+        el('front', [
+          el('journal-meta', [
+            el('journal-title-group', [el('journal-title', [t('Journal of Tests')])]),
+            el('issn', [t('1234-5678')]),
+          ]),
+          el('article-meta', [
+            el('article-id', [t('PMC7654321')], { '@_pub-id-type': 'pmcid' }),
+            el('article-id', [t('7654321')], { '@_pub-id-type': 'pmid' }),
+            el('title-group', [el('article-title', [t('Structured Article')])]),
+            el('contrib-group', [
+              el('contrib', [el('name', [el('surname', [t('Smith')])])], {
+                '@_contrib-type': 'author',
+              }),
+            ]),
+            el('aff', [t('Department of Testing')]),
+            el('pub-date', [el('year', [t('2020')])], { '@_pub-type': 'ppub' }),
+            el('pub-date', [el('year', [t('2021')]), el('month', [t('03')])], {
+              '@_pub-type': 'epub',
+            }),
+            el('volume', [t('12')]),
+            el('issue', [t('2')]),
+            el('fpage', [t('10')]),
+            el('lpage', [t('12')]),
+            el('abstract', [
+              el('sec', [el('title', [t('Background')]), el('p', [t('Why it matters.')])]),
+              el('sec', [el('p', [t('Unlabeled abstract text.')])]),
+            ]),
+            el('kwd-group', [el('kwd', [t('PubMed')]), el('kwd', [t('Testing')])]),
+          ]),
+        ]),
+        el('body', [el('p', [t('Opening body.')])]),
+        el('back', [
+          el('ref-list', [
+            el('ref', [el('mixed-citation', [t('Reference text.')])], { '@_id': 'R1' }),
+          ]),
+        ]),
+      ],
+      { '@_article-type': 'review-article' },
+    );
+
+    const result = parsePmcArticle(article);
+
+    expect(result).toMatchObject({
+      pmcId: 'PMC7654321',
+      pmid: '7654321',
+      title: 'Structured Article',
+      affiliations: ['Department of Testing'],
+      journal: {
+        title: 'Journal of Tests',
+        issn: '1234-5678',
+        volume: '12',
+        issue: '2',
+        pages: '10-12',
+      },
+      publicationDate: { year: '2021', month: '03' },
+      abstract: 'Background: Why it matters.\n\nUnlabeled abstract text.',
+      keywords: ['PubMed', 'Testing'],
+      sections: [{ text: 'Opening body.' }],
+      references: [{ id: 'R1', citation: 'Reference text.' }],
+      articleType: 'review-article',
+    });
+    expect(result.doi).toBeUndefined();
   });
 });

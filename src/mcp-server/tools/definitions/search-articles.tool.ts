@@ -6,6 +6,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { sanitization } from '@cyanheads/mcp-ts-core/utils';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractBriefSummaries } from '@/services/ncbi/parsing/esummary-parser.js';
 import {
@@ -87,6 +88,8 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
   _meta: conceptMeta([SCHEMA_SEARCH_ACTION, EDAM_DATABASE_SEARCH, EDAM_PUBMED_ID]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/search-articles.tool.ts',
+
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     query: z.string().min(1).describe('PubMed search query (supports full NCBI syntax)'),

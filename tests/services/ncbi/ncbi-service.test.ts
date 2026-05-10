@@ -415,6 +415,19 @@ describe('NcbiService.idConvert', () => {
     });
   });
 
+  it('SerializationError on idConvert carries reason ncbi_invalid_response + recovery', async () => {
+    const { service, mockApiClient } = createIdConvertService();
+    (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockResolvedValue('not json');
+
+    await expect(service.idConvert(['123'])).rejects.toMatchObject({
+      code: JsonRpcErrorCode.SerializationError,
+      data: {
+        reason: 'ncbi_invalid_response',
+        recovery: { hint: expect.stringContaining('Retry the request') },
+      },
+    });
+  });
+
   it('returns empty array when response has no records', async () => {
     const { service, mockApiClient } = createIdConvertService();
     (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -423,6 +436,46 @@ describe('NcbiService.idConvert', () => {
 
     const records = await service.idConvert(['123']);
     expect(records).toEqual([]);
+  });
+
+  it('rewrites upstream 400 InvalidParams to ValidationError with idType-specific hint', async () => {
+    const { service, mockApiClient } = createIdConvertService();
+    (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new McpError(JsonRpcErrorCode.InvalidParams, 'NCBI returned HTTP 400 Bad Request.', {
+        url: 'https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/',
+        status: 400,
+        body: '<html>Bad Request</html>',
+      }),
+    );
+
+    await expect(service.idConvert(['not-a-real-id'], 'pmid')).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ValidationError,
+      message: expect.stringMatching(/idType="pmid".*numeric digits/i),
+      data: { idType: 'pmid', idCount: 1 },
+    });
+  });
+
+  it('falls back to a generic message when idtype is unknown', async () => {
+    const { service, mockApiClient } = createIdConvertService();
+    (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new McpError(JsonRpcErrorCode.InvalidParams, 'NCBI returned HTTP 400 Bad Request.'),
+    );
+
+    await expect(service.idConvert(['x'])).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ValidationError,
+      message: expect.stringContaining('unspecified'),
+    });
+  });
+
+  it('does not rewrite non-400 errors', async () => {
+    const { service, mockApiClient } = createIdConvertService();
+    (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI returned HTTP 503.'),
+    );
+
+    await expect(service.idConvert(['123'], 'pmid')).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+    });
   });
 });
 
@@ -665,6 +718,38 @@ describe('NcbiService retry behavior', () => {
     expect(makeRequest).toHaveBeenCalledTimes(3);
   });
 
+  it('exhausted retries stamp reason ncbi_unreachable + recovery on the wire', async () => {
+    const { service, mockApiClient } = createRetryService(1);
+    const makeRequest = mockApiClient.makeRequest as ReturnType<typeof vi.fn>;
+    makeRequest.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'down'));
+
+    await expect(service.eSearch({ db: 'pubmed', term: 'test' })).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: {
+        reason: 'ncbi_unreachable',
+        endpoint: 'esearch',
+        attempts: 2,
+        recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+      },
+    });
+  });
+
+  it('exhausted retries on Timeout/RateLimited do not stamp ncbi_unreachable', async () => {
+    const { service, mockApiClient } = createRetryService(1);
+    const makeRequest = mockApiClient.makeRequest as ReturnType<typeof vi.fn>;
+    makeRequest.mockRejectedValue(new McpError(JsonRpcErrorCode.RateLimited, 'too many'));
+
+    await expect(service.eSearch({ db: 'pubmed', term: 'test' })).rejects.toMatchObject({
+      code: JsonRpcErrorCode.RateLimited,
+      data: { endpoint: 'esearch', attempts: 2 },
+    });
+    // Only ServiceUnavailable retries-exhausted gets stamped — RateLimited has its own
+    // queue_full reason that's stamped at the queue-rejection site.
+    await expect(service.eSearch({ db: 'pubmed', term: 'test' })).rejects.not.toMatchObject({
+      data: { reason: 'ncbi_unreachable' },
+    });
+  });
+
   it('applies capped exponential backoff with jitter', async () => {
     const { service, mockApiClient } = createRetryService(3);
     const makeRequest = mockApiClient.makeRequest as ReturnType<typeof vi.fn>;
@@ -720,6 +805,21 @@ describe('NcbiService retry behavior', () => {
       message: expect.stringMatching(/deadline.*exceeded/i),
     });
     expect(makeRequest).not.toHaveBeenCalled();
+  });
+
+  it('deadline-fired error stamps reason ncbi_deadline_exceeded + recovery on the wire', async () => {
+    const { service, mockApiClient } = createRetryService(3, 1);
+    const makeRequest = mockApiClient.makeRequest as ReturnType<typeof vi.fn>;
+    makeRequest.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'down'));
+
+    await expect(service.eSearch({ db: 'pubmed', term: 'test' })).rejects.toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: {
+        reason: 'ncbi_deadline_exceeded',
+        deadlineMs: 1,
+        recovery: { hint: expect.stringContaining('Reduce batch size') },
+      },
+    });
   });
 
   it('short-circuits retry chain when caller signal aborts before invocation', async () => {

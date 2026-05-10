@@ -231,4 +231,39 @@ describe('formatCitationsTool', () => {
     expect(blocks[0]?.text).toContain('**Unavailable PMIDs:** 99999');
     expect(blocks[0]?.text).toContain('APA');
   });
+
+  it('formats empty results with recovery guidance', () => {
+    const blocks = formatCitationsTool.format!({
+      totalSubmitted: 1,
+      totalFormatted: 0,
+      unavailablePmids: ['99999'],
+      citations: [],
+    });
+
+    const text = blocks[0]?.text ?? '';
+    expect(text).toContain('**Formatted:** 0/1');
+    expect(text).toContain('No articles were returned');
+    expect(text).toContain('pubmed_search_articles');
+    expect(text).toContain('pubmed_spell_check');
+  });
+
+  it('formats BibTeX and RIS citations in fenced code blocks', () => {
+    const blocks = formatCitationsTool.format!({
+      totalSubmitted: 1,
+      totalFormatted: 1,
+      citations: [
+        {
+          pmid: '12345',
+          citations: {
+            bibtex: '@article{pmid12345}',
+            ris: 'TY  - JOUR',
+          },
+        },
+      ],
+    });
+
+    const text = blocks[0]?.text ?? '';
+    expect(text).toContain('```bibtex\n@article{pmid12345}\n```');
+    expect(text).toContain('```ris\nTY  - JOUR\n```');
+  });
 });

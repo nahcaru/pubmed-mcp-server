@@ -33,10 +33,14 @@ describe('convertIdsTool', () => {
     expect(() => convertIdsTool.input.parse({ ids: ['123'], idType: 'invalid' })).toThrow();
   });
 
-  it('accepts all valid idType values', () => {
-    for (const idType of ['pmid', 'pmcid', 'doi']) {
-      expect(() => convertIdsTool.input.parse({ ids: ['123'], idType })).not.toThrow();
-    }
+  it('accepts all valid idType values with format-appropriate IDs', () => {
+    expect(() => convertIdsTool.input.parse({ ids: ['23193287'], idType: 'pmid' })).not.toThrow();
+    expect(() =>
+      convertIdsTool.input.parse({ ids: ['PMC3531190'], idType: 'pmcid' }),
+    ).not.toThrow();
+    expect(() =>
+      convertIdsTool.input.parse({ ids: ['10.1093/nar/gks1195'], idType: 'doi' }),
+    ).not.toThrow();
   });
 
   it('maps successful conversion records with string coercion', async () => {

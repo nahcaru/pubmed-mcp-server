@@ -70,6 +70,20 @@ describe('NcbiRequestQueue', () => {
     );
   });
 
+  it('queue-full rejection carries reason and recovery hint on the wire', async () => {
+    const queue = new NcbiRequestQueue(0, 1);
+    const blocking = new Promise<void>((resolve) => setTimeout(resolve, 100));
+    queue.enqueue(() => blocking, 'blocking', {});
+
+    await expect(queue.enqueue(() => Promise.resolve(), 'overflow', {})).rejects.toMatchObject({
+      data: {
+        reason: 'queue_full',
+        endpoint: 'overflow',
+        recovery: { hint: expect.stringContaining('Retry after') },
+      },
+    });
+  });
+
   it('propagates task errors to the caller', async () => {
     const queue = new NcbiRequestQueue(0);
     await expect(
@@ -87,5 +101,31 @@ describe('NcbiRequestQueue', () => {
     const [r1, r2] = await Promise.all([p1, p2]);
     expect(r1).toBe('caught');
     expect(r2).toBe('ok');
+  });
+
+  it('delays the next dispatch when requests arrive inside the rate-limit window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000);
+
+    try {
+      const queue = new NcbiRequestQueue(1000);
+      const firstTask = vi.fn(async () => 'first');
+      const secondTask = vi.fn(async () => 'second');
+
+      const first = queue.enqueue(firstTask, 'first', {});
+      await vi.runAllTimersAsync();
+      await expect(first).resolves.toBe('first');
+
+      const second = queue.enqueue(secondTask, 'second', {});
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(secondTask).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await expect(second).resolves.toBe('second');
+      expect(secondTask).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -7,6 +7,7 @@
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 
+import { recoveryFor } from '@/services/error-contracts.js';
 import type { NcbiRequestParams } from './types.js';
 
 const DEFAULT_MAX_QUEUE_SIZE = 100;
@@ -41,7 +42,12 @@ export class NcbiRequestQueue {
         new McpError(
           JsonRpcErrorCode.RateLimited,
           `NCBI request queue is full (max ${this.maxQueueSize}).`,
-          { reason: 'queue_full', endpoint, queueSize: this.queue.length },
+          {
+            reason: 'queue_full',
+            endpoint,
+            queueSize: this.queue.length,
+            ...recoveryFor('queue_full'),
+          },
         ),
       );
     }

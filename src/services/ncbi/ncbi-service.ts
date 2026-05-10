@@ -11,10 +11,12 @@ import {
   McpError,
   serializationError,
   timeout,
+  validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 
 import { getServerConfig } from '@/config/server-config.js';
+import { recoveryFor } from '@/services/error-contracts.js';
 import { NcbiApiClient } from './api-client.js';
 import { NcbiRequestQueue } from './request-queue.js';
 import { NcbiResponseHandler } from './response-handler.js';
@@ -35,6 +37,18 @@ import {
   type NcbiRequestParams,
   type XmlPubmedArticleSet,
 } from './types.js';
+
+/**
+ * Per-idType expected-format hints surfaced when PMC ID Converter rejects a
+ * batch with HTTP 400. Informational only — NCBI's API is the authority on
+ * what's accepted, so a stale hint here only weakens the error message, never
+ * blocks a valid request.
+ */
+const ID_CONVERT_FORMAT_HINTS: Record<string, string> = {
+  pmid: 'numeric digits, e.g. "23193287"',
+  pmcid: '"PMC" + digits, e.g. "PMC3531190"',
+  doi: 'starts with "10.", e.g. "10.1093/nar/gks1195"',
+};
 
 /** Sentinel reason used when the service-level deadline expires. */
 class NcbiDeadlineExceeded extends Error {
@@ -235,20 +249,35 @@ export class NcbiService {
       ...(idtype && { idtype }),
     };
 
-    const text = await this.queue.enqueue(
-      () =>
-        this.runWithDeadline(
-          (signal) =>
-            this.withRetry(
-              () => this.apiClient.makeExternalRequest(NCBI_PMC_IDCONV_URL, params, signal),
-              'idconv',
-              signal,
-            ),
-          options?.signal,
-        ),
-      'idconv',
-      params,
-    );
+    let text: string;
+    try {
+      text = await this.queue.enqueue(
+        () =>
+          this.runWithDeadline(
+            (signal) =>
+              this.withRetry(
+                () => this.apiClient.makeExternalRequest(NCBI_PMC_IDCONV_URL, params, signal),
+                'idconv',
+                signal,
+              ),
+            options?.signal,
+          ),
+        'idconv',
+        params,
+      );
+    } catch (error: unknown) {
+      // PMC ID Converter returns 400 (InvalidParams) for malformed inputs and
+      // leaks the upstream HTML/text body into `data.body`. Rewrite to a typed
+      // validation error with idType-specific guidance and drop the leaky body.
+      if (error instanceof McpError && error.code === JsonRpcErrorCode.InvalidParams) {
+        const hint = ID_CONVERT_FORMAT_HINTS[idtype ?? ''];
+        const message = hint
+          ? `PMC ID Converter rejected one or more inputs as malformed (idType="${idtype}"). Expected: ${hint}.`
+          : `PMC ID Converter rejected the input as malformed (idType="${idtype ?? 'unspecified'}").`;
+        throw validationError(message, { idType: idtype, idCount: ids.length }, { cause: error });
+      }
+      throw error;
+    }
 
     let parsed: unknown;
     try {
@@ -256,7 +285,11 @@ export class NcbiService {
     } catch (error: unknown) {
       throw serializationError(
         'Failed to parse ID Converter JSON response.',
-        { responseSnippet: text.substring(0, 200) },
+        {
+          reason: 'ncbi_invalid_response',
+          responseSnippet: text.substring(0, 200),
+          ...recoveryFor('ncbi_invalid_response'),
+        },
         { cause: error },
       );
     }
@@ -300,7 +333,11 @@ export class NcbiService {
       if (error instanceof NcbiDeadlineExceeded) {
         throw timeout(
           error.message,
-          { reason: 'ncbi_deadline_exceeded', deadlineMs: this.totalDeadlineMs },
+          {
+            reason: 'ncbi_deadline_exceeded',
+            deadlineMs: this.totalDeadlineMs,
+            ...recoveryFor('ncbi_deadline_exceeded'),
+          },
           { cause: error },
         );
       }
@@ -365,13 +402,21 @@ export class NcbiService {
         throw new McpError(
           error.code,
           `${msg} (failed after ${attempts} attempts)`,
-          { ...(reason && { reason }), endpoint: label, attempts },
+          {
+            ...(reason && { reason, ...recoveryFor(reason) }),
+            endpoint: label,
+            attempts,
+          },
           { cause: error },
         );
       }
     }
 
-    throw internalError('Request failed after all retries.', { endpoint: label });
+    throw internalError('Request failed after all retries.', {
+      reason: 'ncbi_unreachable',
+      endpoint: label,
+      ...recoveryFor('ncbi_unreachable'),
+    });
   }
 
   /**

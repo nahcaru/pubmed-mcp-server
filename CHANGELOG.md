@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.9](changelog/2.6.x/2.6.9.md) — 2026-05-10
+
+Service-layer error-contracts module with `recoveryFor()` helper; `pubmed_convert_ids` 400-leak rewrite; `pubmed_find_related` ELink `<ERROR>` folded into ESummary disambiguation. Adopts `@cyanheads/mcp-ts-core` 0.8.20.
+
 ## [2.6.8](changelog/2.6.x/2.6.8.md) — 2026-05-09
 
 Fix `server.json` top-level `version` field missed in v2.6.7 — kept the registry stuck at 2.6.6 even though the two `packages[*].version` entries advanced. No code changes.

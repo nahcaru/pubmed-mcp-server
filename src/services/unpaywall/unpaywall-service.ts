@@ -17,6 +17,7 @@ import {
 } from '@cyanheads/mcp-ts-core/utils';
 
 import { getServerConfig } from '@/config/server-config.js';
+import { recoveryFor } from '@/services/error-contracts.js';
 import {
   UNPAYWALL_API_BASE,
   type UnpaywallContent,
@@ -59,7 +60,11 @@ export class UnpaywallService {
       const msg = error instanceof Error ? error.message : String(error);
       throw serviceUnavailable(
         `Unpaywall request failed: ${msg}`,
-        { doi: normalized },
+        {
+          reason: 'unpaywall_unreachable',
+          doi: normalized,
+          ...recoveryFor('unpaywall_unreachable'),
+        },
         { cause: error },
       );
     }
@@ -149,7 +154,11 @@ export class UnpaywallService {
       });
     } catch (error: unknown) {
       const msg = error instanceof Error ? error.message : String(error);
-      throw serviceUnavailable(`Unpaywall content fetch failed: ${msg}`, { url }, { cause: error });
+      throw serviceUnavailable(
+        `Unpaywall content fetch failed: ${msg}`,
+        { reason: 'unpaywall_unreachable', url, ...recoveryFor('unpaywall_unreachable') },
+        { cause: error },
+      );
     }
 
     if (!response.ok) {

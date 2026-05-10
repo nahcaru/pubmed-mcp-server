@@ -5,6 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import {
   type CitationStyle,
   formatCitations,
@@ -25,6 +26,8 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
   _meta: conceptMeta([SCHEMA_CREATIVE_WORK, EDAM_DATA_FORMATTING]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/format-citations.tool.ts',
+
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     pmids: z.array(pmidStringSchema).min(1).max(50).describe('PubMed IDs to cite'),

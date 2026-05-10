@@ -75,6 +75,105 @@ describe('NcbiResponseHandler', () => {
       ).toThrow(/invalid XML/i);
     });
 
+    it('invalid XML stamps reason ncbi_invalid_response + recovery on the wire', () => {
+      const handler = createHandler();
+      try {
+        handler.parseAndHandleResponse('<broken>xml', 'esearch', { retmode: 'xml' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.SerializationError,
+          data: {
+            reason: 'ncbi_invalid_response',
+            endpoint: 'esearch',
+            recovery: { hint: expect.stringContaining('Retry the request') },
+          },
+        });
+      }
+    });
+
+    it('classifies HTML returned on the XML path as service unavailable', () => {
+      const handler = createHandler();
+
+      try {
+        handler.parseAndHandleResponse(
+          '<!DOCTYPE html><html><body>rate limited</body></html>',
+          'efetch',
+          {
+            retmode: 'xml',
+          },
+        );
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toBeInstanceOf(McpError);
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.ServiceUnavailable,
+          message: expect.stringContaining('HTML response instead of XML'),
+          data: {
+            reason: 'ncbi_unreachable',
+            endpoint: 'efetch',
+            recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+          },
+        });
+      }
+    });
+
+    it('NCBI ERROR-tag in XML stamps reason ncbi_unreachable + recovery on the wire', () => {
+      const handler = createHandler();
+      const xml =
+        '<?xml version="1.0"?><eSummaryResult><ERROR>Invalid uid</ERROR></eSummaryResult>';
+      try {
+        handler.parseAndHandleResponse(xml, 'esummary', { retmode: 'xml' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.ServiceUnavailable,
+          data: {
+            reason: 'ncbi_unreachable',
+            endpoint: 'esummary',
+            recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+          },
+        });
+      }
+    });
+
+    it('classifies "cannot get document summary" as NotFound (not retryable)', () => {
+      const handler = createHandler();
+      const xml =
+        '<?xml version="1.0"?><eSummaryResult><ERROR>UID=99999999999: cannot get document summary</ERROR></eSummaryResult>';
+      try {
+        handler.parseAndHandleResponse(xml, 'esummary', { retmode: 'xml' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.NotFound,
+          data: {
+            reason: 'ncbi_resource_not_found',
+            endpoint: 'esummary',
+            ncbiErrors: ['UID=99999999999: cannot get document summary'],
+            recovery: { hint: expect.stringContaining('not found in NCBI') },
+          },
+        });
+      }
+    });
+
+    it('classifies "Empty id list" as NotFound when ERROR_PATHS match', () => {
+      const handler = createHandler();
+      // ESummary returns this when called against a UID that NCBI cannot resolve;
+      // we use the eSummaryResult.ERROR path which the response-handler watches.
+      const xml =
+        '<?xml version="1.0"?><eSummaryResult><ERROR>Empty id list - nothing todo</ERROR></eSummaryResult>';
+      try {
+        handler.parseAndHandleResponse(xml, 'esummary', { retmode: 'xml' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.NotFound,
+          data: { reason: 'ncbi_resource_not_found' },
+        });
+      }
+    });
+
     it('throws on NCBI error in XML response', () => {
       const handler = createHandler();
       const xml =
@@ -82,6 +181,19 @@ describe('NcbiResponseHandler', () => {
       expect(() => handler.parseAndHandleResponse(xml, 'esummary', { retmode: 'xml' })).toThrow(
         /NCBI API Error/,
       );
+    });
+
+    it('detects uppercase NCBI error tags before using the ordered parser', () => {
+      const handler = createHandler();
+      const xml =
+        '<?xml version="1.0"?><eSummaryResult><ERROR>Invalid uid</ERROR></eSummaryResult>';
+
+      expect(() =>
+        handler.parseAndHandleResponse(xml, 'esummary', {
+          retmode: 'xml',
+          useOrderedParser: true,
+        }),
+      ).toThrow(/NCBI API Error.*Invalid uid/);
     });
 
     it('returns raw XML when returnRawXml is true', () => {
@@ -118,6 +230,11 @@ describe('NcbiResponseHandler', () => {
         expect(error).toMatchObject({
           code: JsonRpcErrorCode.SerializationError,
           message: expect.stringContaining('synthetic parser failure'),
+          data: {
+            reason: 'ncbi_invalid_response',
+            endpoint: 'efetch',
+            recovery: { hint: expect.stringContaining('Retry the request') },
+          },
         });
       }
     });
@@ -142,12 +259,65 @@ describe('NcbiResponseHandler', () => {
       ).toThrow(/Failed to parse/);
     });
 
+    it('invalid JSON stamps reason ncbi_invalid_response + recovery on the wire', () => {
+      const handler = createHandler();
+      try {
+        handler.parseAndHandleResponse('not json', 'esearch', { retmode: 'json' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.SerializationError,
+          data: {
+            reason: 'ncbi_invalid_response',
+            endpoint: 'esearch',
+            recovery: { hint: expect.stringContaining('Retry the request') },
+          },
+        });
+      }
+    });
+
     it('throws on JSON response with error field', () => {
       const handler = createHandler();
       const json = '{"error":"Invalid ID"}';
       expect(() => handler.parseAndHandleResponse(json, 'esearch', { retmode: 'json' })).toThrow(
         /NCBI API Error.*Invalid ID/,
       );
+    });
+
+    it('JSON error-field stamps reason ncbi_unreachable + recovery on the wire', () => {
+      const handler = createHandler();
+      const json = '{"error":"Invalid ID"}';
+      try {
+        handler.parseAndHandleResponse(json, 'esearch', { retmode: 'json' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.ServiceUnavailable,
+          data: {
+            reason: 'ncbi_unreachable',
+            endpoint: 'esearch',
+            recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+          },
+        });
+      }
+    });
+
+    it('JSON error-field for missing record stamps reason ncbi_resource_not_found', () => {
+      const handler = createHandler();
+      const json = '{"error":"UID=99999999999: cannot get document summary"}';
+      try {
+        handler.parseAndHandleResponse(json, 'esummary', { retmode: 'json' });
+        throw new Error('Expected parseAndHandleResponse to throw');
+      } catch (error: unknown) {
+        expect(error).toMatchObject({
+          code: JsonRpcErrorCode.NotFound,
+          data: {
+            reason: 'ncbi_resource_not_found',
+            endpoint: 'esummary',
+            recovery: { hint: expect.stringContaining('not found in NCBI') },
+          },
+        });
+      }
     });
   });
 
@@ -157,6 +327,14 @@ describe('NcbiResponseHandler', () => {
       const xml = '<?xml version="1.0"?><root><value>1</value></root>';
       const result = handler.parseAndHandleResponse<Record<string, unknown>>(xml, 'test');
       expect(result).toHaveProperty('root');
+    });
+
+    it('returns raw text for unknown retmode values', () => {
+      const handler = createHandler();
+      const result = handler.parseAndHandleResponse<string>('raw response', 'efetch', {
+        retmode: 'unknown' as never,
+      });
+      expect(result).toBe('raw response');
     });
   });
 
@@ -223,6 +401,34 @@ describe('NcbiResponseHandler', () => {
         eSummaryResult: { ERROR: 'bad uid' },
       });
       expect(messages).toEqual(['bad uid']);
+    });
+
+    it('extracts error text from parsed XML nodes with attributes', () => {
+      const handler = createHandler();
+      const messages = handler.extractNcbiErrorMessages({
+        ERROR: { '#text': 'bad uid', '@_code': '400' },
+      });
+      expect(messages).toEqual(['bad uid']);
+    });
+
+    it('sanitizes raw NCBI C++ transport traces', () => {
+      const handler = createHandler();
+      const messages = handler.extractNcbiErrorMessages({
+        ERROR: 'NCBI C++ Exception: CTxRawClient closed connection EOF',
+      });
+      expect(messages).toEqual([
+        'NCBI API temporarily unavailable (connection reset) — try again in a few seconds.',
+      ]);
+    });
+
+    it('sanitizes raw NCBI C++ internal traces', () => {
+      const handler = createHandler();
+      const messages = handler.extractNcbiErrorMessages({
+        ERROR: 'NCBI C++ Exception: CException from backend worker',
+      });
+      expect(messages).toEqual([
+        'NCBI API returned an internal error — try again in a few seconds.',
+      ]);
     });
 
     it('extracts warnings when no errors present', () => {

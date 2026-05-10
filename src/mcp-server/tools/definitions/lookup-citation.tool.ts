@@ -7,6 +7,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractBriefSummaries } from '@/services/ncbi/parsing/esummary-parser.js';
 import type { ECitMatchCitation } from '@/services/ncbi/types.js';
@@ -31,11 +32,13 @@ function authorSurnames(authors: string): string[] {
 }
 
 export const lookupCitationTool = tool('pubmed_lookup_citation', {
-  description: `Look up PubMed IDs from partial bibliographic citations. Useful when you have a reference (journal, year, volume, page, author) and need the PMID. Uses NCBI ECitMatch for deterministic matching — more reliable than searching by citation fields. Each citation must include at least one bibliographic field (journal, year, volume, firstPage, or authorName); more fields = better match accuracy.`,
+  description: `Look up PubMed IDs from partial bibliographic citations. Useful when you have a reference (journal, year, volume, page, author) and need the PMID — deterministic citation matching, more reliable than free-text search for structured references. Each citation must include at least one bibliographic field (journal, year, volume, firstPage, or authorName); more fields = better match accuracy.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL, EDAM_PUBMED_ID]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/lookup-citation.tool.ts',
+
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     citations: z

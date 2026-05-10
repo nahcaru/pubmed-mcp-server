@@ -97,6 +97,22 @@ describe('formatApa', () => {
     expect(citation).toContain('45\u201352');
   });
 
+  it('preserves Unicode-letter initials (\u00c1, \u00d6, \u00c9, \u00df)', () => {
+    const article: ParsedArticle = {
+      ...sampleArticle,
+      authors: [
+        { lastName: 'Del Pozo', firstName: '\u00c1ngela', initials: '\u00c1' },
+        { lastName: 'M\u00fcller', firstName: '\u00d6mer', initials: '\u00d6' },
+        { lastName: 'Dupont', firstName: '\u00c9lise', initials: '\u00c9M' },
+      ],
+    };
+    const citation = formatApa(article);
+    expect(citation).toContain('Del Pozo, \u00c1.');
+    expect(citation).toContain('M\u00fcller, \u00d6.');
+    expect(citation).toContain('Dupont, \u00c9. M.');
+    expect(citation).not.toMatch(/,\s*,/);
+  });
+
   it('adds trailing period when last author is collective', () => {
     const article: ParsedArticle = {
       ...sampleArticle,

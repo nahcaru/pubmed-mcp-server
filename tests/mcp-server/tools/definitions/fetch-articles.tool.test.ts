@@ -73,6 +73,20 @@ describe('fetchArticlesTool', () => {
     await expect(promise).rejects.toMatchObject({ data: { reason: 'invalid_efetch_response' } });
   });
 
+  it('invalid_efetch_response carries the contract recovery hint on the wire', async () => {
+    mockEFetch.mockResolvedValue({});
+    const ctx = createMockContext({ errors: fetchArticlesTool.errors });
+    const input = fetchArticlesTool.input.parse({ pmids: ['12345'] });
+
+    await expect(fetchArticlesTool.handler(input, ctx)).rejects.toMatchObject({
+      data: {
+        reason: 'invalid_efetch_response',
+        requestedPmids: 1,
+        recovery: { hint: expect.stringMatching(/.{20,}/) },
+      },
+    });
+  });
+
   it('parses articles and adds URLs', async () => {
     mockEFetch.mockResolvedValue({
       PubmedArticleSet: {

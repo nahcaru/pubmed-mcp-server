@@ -5,6 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { conceptMeta, SCHEMA_SEARCH_ACTION } from './_concepts.js';
 
@@ -15,6 +16,8 @@ export const spellCheckTool = tool('pubmed_spell_check', {
   _meta: conceptMeta([SCHEMA_SEARCH_ACTION]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/spell-check.tool.ts',
+
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     query: z.string().min(2).describe('PubMed search query to spell-check'),

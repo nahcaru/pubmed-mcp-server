@@ -119,10 +119,9 @@ function formatAuthorApa(author: ParsedArticleAuthor): string {
       .map((part) => `${part[0]}.`)
       .join(' ');
   if (!initials) return last;
-  // Extract only letter characters, format each as "X." separated by spaces
-  const formatted = initials
-    .replace(/[^A-Za-z]/g, '')
-    .split('')
+  // Extract only letter characters (Unicode-aware: preserve Á, Ö, É, etc.),
+  // format each as "X." separated by spaces.
+  const formatted = Array.from(initials.replace(/[^\p{L}]/gu, ''))
     .map((c) => `${c}.`)
     .join(' ');
   if (!last) return formatted;

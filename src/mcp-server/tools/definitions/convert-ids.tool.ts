@@ -5,6 +5,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
+import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { conceptMeta, EDAM_ACCESSION, EDAM_ID_MAPPING } from './_concepts.js';
 
@@ -18,11 +19,13 @@ const PMC_NOT_FOUND_REWRITE =
   'Not in PMC ID Converter. Article may still exist in PubMed — try pubmed_fetch_articles (PMID → DOI) or pubmed_search_articles.';
 
 export const convertIdsTool = tool('pubmed_convert_ids', {
-  description: `Convert between article identifiers (DOI, PMID, PMCID). Accepts up to 50 IDs of a single type per request. Uses the NCBI PMC ID Converter API — only resolves articles indexed in PubMed Central. For articles not in PMC, use pubmed_search_articles instead.`,
+  description: `Convert between article identifiers (DOI, PMID, PMCID). Accepts up to 50 IDs of a single type per request. Only resolves articles indexed in PubMed Central — for articles not in PMC, use pubmed_search_articles instead.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([EDAM_ID_MAPPING, EDAM_ACCESSION]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/convert-ids.tool.ts',
+
+  errors: [...NCBI_SERVICE_ERRORS] as const,
 
   input: z.object({
     ids: z

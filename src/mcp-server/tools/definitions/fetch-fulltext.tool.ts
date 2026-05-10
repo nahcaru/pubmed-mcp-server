@@ -10,6 +10,7 @@
 import { type Context, tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { htmlExtractor, pdfParser } from '@cyanheads/mcp-ts-core/utils';
+import { NCBI_SERVICE_ERRORS, UNPAYWALL_SERVICE_ERRORS } from '@/services/error-contracts.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractDoi, extractPmid } from '@/services/ncbi/parsing/article-parser.js';
 import { parsePmcArticle } from '@/services/ncbi/parsing/pmc-article-parser.js';
@@ -27,7 +28,6 @@ import type {
 } from '@/services/unpaywall/types.js';
 import { getUnpaywallService } from '@/services/unpaywall/unpaywall-service.js';
 import { conceptMeta, EDAM_DATA_RETRIEVAL, SCHEMA_SCHOLARLY_ARTICLE } from './_concepts.js';
-import { NCBI_SERVICE_ERRORS } from './_error-contracts.js';
 import { pmidStringSchema } from './_schemas.js';
 
 function normalizePmcId(id: string): string {
@@ -187,7 +187,7 @@ const UnavailableSchema = z
 
 export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
   description:
-    'Fetch full-text articles. Primary source is PubMed Central (structured JATS with sections and references). When a PMID has no PMC copy, transparently falls back to Unpaywall (open-access copies hosted by publishers or institutional repositories) and returns best-effort HTML-as-Markdown or PDF-as-text. Set UNPAYWALL_EMAIL to enable the fallback. Provide exactly one of `pmcids` (PMC IDs directly) or `pmids` (PubMed IDs, auto-resolved via the PMC ID Converter) — not both, not neither.',
+    'Fetch full-text articles from PubMed Central with structured sections and references. When a PMID has no PMC copy, transparently falls back to publisher-hosted or institutional open-access copies as HTML-as-Markdown or PDF-as-text. Provide exactly one of `pmcids` (PMC IDs directly) or `pmids` (PubMed IDs, auto-resolved) — not both, not neither.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL]),
   sourceUrl:
@@ -195,6 +195,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
 
   errors: [
     ...NCBI_SERVICE_ERRORS,
+    ...UNPAYWALL_SERVICE_ERRORS,
     {
       reason: 'invalid_pmc_efetch_response',
       code: JsonRpcErrorCode.SerializationError,
@@ -422,6 +423,12 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
     }
     if (result.unavailablePmcIds?.length) {
       lines.push(`**Unavailable PMC IDs:** ${result.unavailablePmcIds.join(', ')}`);
+    }
+
+    if (result.totalReturned === 0) {
+      lines.push(
+        `\n> No full-text articles returned. Articles must be open-access and indexed in PMC (or recoverable via Unpaywall) to retrieve full text. For metadata and abstracts only, use \`pubmed_fetch_articles\`.`,
+      );
     }
 
     for (const a of result.articles) {
