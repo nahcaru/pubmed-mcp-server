@@ -365,6 +365,31 @@ export class NcbiResponseHandler {
         );
       }
 
+      // NCBI's eLink (and occasionally other endpoints) drops the root element
+      // when the upstream backend connection fails mid-response, yielding just
+      // `<?xml ... ?>` + DOCTYPE with no body. JSON retmode reveals the same
+      // failure as a TXCLIENT EOF in an `ERROR` field; XML just truncates.
+      // Reclassify as transient ServiceUnavailable so the retry chain recovers,
+      // rather than SerializationError which short-circuits retries.
+      const bodyMinusProlog = responseText
+        .replace(/<\?xml[^?]*\?>/gi, '')
+        .replace(/<!DOCTYPE[^>]*>/gi, '')
+        .trim();
+      if (bodyMinusProlog.length === 0) {
+        logger.warning(
+          'NCBI returned a prolog-only XML response (upstream backend failure).',
+          requestContextService.createRequestContext({
+            operation: 'NcbiEmptyResponse',
+            endpoint,
+            responseLength: responseText.length,
+          }),
+        );
+        throw serviceUnavailable(
+          'NCBI returned an empty response body — the upstream backend likely failed mid-request.',
+          { reason: 'ncbi_unreachable', endpoint, ...recoveryFor('ncbi_unreachable') },
+        );
+      }
+
       const xmlForValidation = responseText.replace(/<!DOCTYPE[^>]*>/gi, '');
       const validationResult = XMLValidator.validate(xmlForValidation);
       if (validationResult !== true) {

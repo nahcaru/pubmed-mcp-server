@@ -27,7 +27,6 @@ interface ELinkLinkSetDb {
 }
 
 interface ELinkResultItem {
-  ERROR?: string;
   LinkSet?: { LinkSetDb?: ELinkLinkSetDb | ELinkLinkSetDb[] };
 }
 
@@ -125,20 +124,6 @@ export const findRelatedTool = tool('pubmed_find_related', {
     const eLinkResult = (await ncbi.eLink(eLinkParams, { signal: ctx.signal })) as ELinkResponse;
     const eLinkResultsArray = ensureArray(eLinkResult?.eLinkResult);
     const firstResult = eLinkResultsArray[0] as ELinkResultItem | undefined;
-
-    // NCBI ELink stamps `<ERROR>` for invalid PMIDs alongside an absent or empty
-    // LinkSet — the same observable shape as a valid PMID with no related links.
-    // Fall through to the empty-LinkSet path below; the ESummary disambiguation
-    // there distinguishes "unknown PMID" from "valid PMID, no relations" and
-    // produces a notice in either case. Log the raw payload for telemetry.
-    if (firstResult?.ERROR) {
-      ctx.log.debug('NCBI ELink returned <ERROR>; disambiguating via ESummary', {
-        pmid: input.pmid,
-        relationship: input.relationship,
-        ncbiError: firstResult.ERROR,
-      });
-    }
-
     const linkSet = firstResult?.LinkSet;
     let foundPmids: { pmid: string; score?: number }[] = [];
 

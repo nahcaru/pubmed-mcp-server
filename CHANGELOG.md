@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.10](changelog/2.6.x/2.6.10.md) — 2026-05-10
+
+Reclassify NCBI prolog-only XML responses as transient `ServiceUnavailable` so the retry chain recovers, fixing intermittent `pubmed_find_related` (and any eLink) failures caused by upstream TXCLIENT EOFs.
+
 ## [2.6.9](changelog/2.6.x/2.6.9.md) — 2026-05-10
 
 Service-layer error-contracts module with `recoveryFor()` helper; `pubmed_convert_ids` 400-leak rewrite; `pubmed_find_related` ELink `<ERROR>` folded into ESummary disambiguation. Adopts `@cyanheads/mcp-ts-core` 0.8.20.
