@@ -7,6 +7,14 @@
 
 import { notFound, serializationError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
+/**
+ * fast-xml-parser is pinned to `~5.7.3` in package.json. 5.8.0 deprecates
+ * `XMLValidator` in favor of a new sibling package `fast-xml-validator`
+ * (published days before the deprecation, 0 dependents, by the same author).
+ * 5.8.0 carries no security fix or feature we need, so we stay on 5.7.x until
+ * `fast-xml-validator` has time in the wild. Re-evaluate during a future
+ * `maintenance` pass — if `bun update --latest` bumps this, restore the pin.
+ */
 import { XMLParser as FastXmlParser, XMLValidator } from 'fast-xml-parser';
 
 import { recoveryFor } from '@/services/error-contracts.js';

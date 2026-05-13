@@ -33,6 +33,8 @@ await createApp({
   ],
   resources: [databaseInfoResource],
   prompts: [researchPlanPrompt],
+  instructions:
+    "PubMed/NCBI E-utilities wrapper. Typical research flow: `pubmed_search_articles` → `pubmed_fetch_articles` (metadata) → `pubmed_fetch_fulltext`. Prefer `pubmed_lookup_citation` over free-text search when you have a partial known reference — it's deterministic. Use `pubmed_lookup_mesh` and `pubmed_spell_check` to refine queries before searching, when needed.",
   landing: {
     tagline:
       'Search PubMed, fetch articles, generate citations, explore MeSH terms, and discover related research.',

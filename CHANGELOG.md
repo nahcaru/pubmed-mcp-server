@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.6.11](changelog/2.6.x/2.6.11.md) — 2026-05-13
+
+Adopts `@cyanheads/mcp-ts-core` 0.9.0 (Workers under `nodejs_compat`, `instructions` field, portability lint family). Pins `fast-xml-parser` to `~5.7.3` to avoid the 5.8.0 `XMLValidator` deprecation in favor of an unproven sibling package. Server now ships an `instructions` string.
+
 ## [2.6.10](changelog/2.6.x/2.6.10.md) — 2026-05-10
 
 Reclassify NCBI prolog-only XML responses as transient `ServiceUnavailable` so the retry chain recovers, fixing intermittent `pubmed_find_related` (and any eLink) failures caused by upstream TXCLIENT EOFs.
