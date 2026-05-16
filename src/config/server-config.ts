@@ -20,6 +20,12 @@ const ServerConfigSchema = z.object({
   toolIdentifier: z.string().default('pubmed-mcp-server').describe('NCBI tool identifier'),
   adminEmail: z.preprocess(emptyAsUndefined, z.email().optional()).describe('Admin contact email'),
   requestDelayMs: z.coerce.number().min(50).max(5000).default(334).describe('Request delay in ms'),
+  maxConcurrent: z.coerce
+    .number()
+    .min(1)
+    .max(16)
+    .default(8)
+    .describe('Max concurrent in-flight NCBI requests'),
   maxRetries: z.coerce.number().min(0).max(10).default(6).describe('Max retry attempts'),
   timeoutMs: z.coerce
     .number()
@@ -55,6 +61,7 @@ export function getServerConfig(): ServerConfig {
       toolIdentifier: 'NCBI_TOOL_IDENTIFIER',
       adminEmail: 'NCBI_ADMIN_EMAIL',
       requestDelayMs: 'NCBI_REQUEST_DELAY_MS',
+      maxConcurrent: 'NCBI_MAX_CONCURRENT',
       maxRetries: 'NCBI_MAX_RETRIES',
       timeoutMs: 'NCBI_TIMEOUT_MS',
       totalDeadlineMs: 'NCBI_TOTAL_DEADLINE_MS',

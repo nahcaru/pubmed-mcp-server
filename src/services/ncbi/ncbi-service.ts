@@ -251,19 +251,20 @@ export class NcbiService {
 
     let text: string;
     try {
-      text = await this.queue.enqueue(
-        () =>
-          this.runWithDeadline(
-            (signal) =>
+      text = await this.runWithDeadline(
+        (signal) =>
+          this.queue.enqueue(
+            () =>
               this.withRetry(
                 () => this.apiClient.makeExternalRequest(NCBI_PMC_IDCONV_URL, params, signal),
                 'idconv',
                 signal,
               ),
-            options?.signal,
+            'idconv',
+            params,
+            signal,
           ),
-        'idconv',
-        params,
+        options?.signal,
       );
     } catch (error: unknown) {
       // PMC ID Converter returns 400 (InvalidParams) for malformed inputs and
@@ -420,24 +421,23 @@ export class NcbiService {
   }
 
   /**
-   * Enqueues a request with a service-level deadline and retry logic that covers
-   * both HTTP-level failures (network errors, timeouts) and XML-level errors
-   * (NCBI returning 200 OK with an error structure in the response body, e.g.
-   * connection resets surfaced as C++ exception traces).
+   * Runs a request under a service-level deadline that bounds queue wait time
+   * + retry chain + HTTP execution. The deadline is constructed *outside* the
+   * queue so a backlog can't burn a request's budget before it even dispatches.
    *
-   * The combined deadline+caller signal is threaded into both the HTTP fetch
-   * (cancels wedged requests) and the backoff sleep (cancels pending retries),
-   * bounding the total time to `totalDeadlineMs` regardless of retry count.
+   * The combined deadline+caller signal is threaded into the queue (cancels a
+   * still-waiting task), the retry chain (cancels pending backoff sleeps),
+   * and the HTTP fetch (cancels wedged requests).
    */
   private performRequest<T>(
     endpoint: string,
     params: NcbiRequestParams,
     options?: NcbiRequestOptions,
   ): Promise<T> {
-    return this.queue.enqueue(
-      () =>
-        this.runWithDeadline(
-          (signal) =>
+    return this.runWithDeadline(
+      (signal) =>
+        this.queue.enqueue(
+          () =>
             this.withRetry(
               async () => {
                 const text = await this.apiClient.makeRequest(endpoint, params, {
@@ -449,10 +449,11 @@ export class NcbiService {
               endpoint,
               signal,
             ),
-          options?.signal,
+          endpoint,
+          params,
+          signal,
         ),
-      endpoint,
-      params,
+      options?.signal,
     );
   }
 }
@@ -470,7 +471,7 @@ export function initNcbiService(): void {
     ...(config.apiKey && { apiKey: config.apiKey }),
     ...(config.adminEmail && { adminEmail: config.adminEmail }),
   });
-  const queue = new NcbiRequestQueue(config.requestDelayMs);
+  const queue = new NcbiRequestQueue(config.requestDelayMs, config.maxConcurrent);
   const responseHandler = new NcbiResponseHandler();
   _service = new NcbiService(
     apiClient,
@@ -486,6 +487,7 @@ export function initNcbiService(): void {
       toolIdentifier: config.toolIdentifier,
       hasApiKey: !!config.apiKey,
       requestDelayMs: config.requestDelayMs,
+      maxConcurrent: config.maxConcurrent,
       totalDeadlineMs: config.totalDeadlineMs,
     }),
   );

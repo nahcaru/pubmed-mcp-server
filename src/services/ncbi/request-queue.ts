@@ -1,6 +1,8 @@
 /**
- * @fileoverview FIFO request queue for NCBI E-utility calls that enforces a minimum
- * delay between requests to comply with NCBI rate limits.
+ * @fileoverview Rate-limited request scheduler for NCBI E-utility calls. Caps
+ * concurrent in-flight requests and enforces a minimum start-gap between
+ * dispatches to stay within NCBI's documented per-second ceiling. Supports
+ * abort-during-wait so callers' deadlines can bound queue time end-to-end.
  * @module src/services/ncbi/request-queue
  */
 
@@ -10,34 +12,60 @@ import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 import { recoveryFor } from '@/services/error-contracts.js';
 import type { NcbiRequestParams } from './types.js';
 
+const DEFAULT_MAX_CONCURRENT = 8;
 const DEFAULT_MAX_QUEUE_SIZE = 100;
 
-interface QueuedRequest<T = unknown> {
+interface Waiter<T = unknown> {
   endpoint: string;
+  onAbort?: () => void;
   params: NcbiRequestParams;
   reject: (reason?: unknown) => void;
   resolve: (value: T | PromiseLike<T>) => void;
+  signal?: AbortSignal;
   task: () => Promise<T>;
 }
 
 /**
- * Processes NCBI API requests through a FIFO queue, inserting a configurable
- * delay between consecutive calls to stay within NCBI's rate-limit window.
+ * Schedules NCBI API requests against two independent ceilings:
+ *
+ *   - **Throughput** (`minStartGapMs`): minimum delay between two consecutive
+ *     dispatch times. Matches NCBI's per-second start-rate cap (≈3/s without
+ *     an API key, ≈10/s with one).
+ *   - **Concurrency** (`maxConcurrent`): maximum number of requests in flight
+ *     simultaneously. Decouples concurrency from rate, so slow upstream
+ *     responses don't block new dispatches.
+ *
+ * Enqueue accepts an optional `AbortSignal` so callers can bound their total
+ * time inside the scheduler — when the signal fires, a still-waiting task
+ * rejects immediately instead of sitting behind a saturated worker for
+ * minutes.
  */
 export class NcbiRequestQueue {
-  private readonly queue: QueuedRequest[] = [];
-  private readonly delayMs: number;
+  private readonly waiters: Waiter[] = [];
+  private readonly minStartGapMs: number;
+  private readonly maxConcurrent: number;
   private readonly maxQueueSize: number;
-  private processing = false;
-  private lastRequestTime = 0;
+  private inFlight = 0;
+  private lastStartTime = 0;
+  private nextDispatchTimer: ReturnType<typeof setTimeout> | undefined;
 
-  constructor(delayMs: number, maxQueueSize = DEFAULT_MAX_QUEUE_SIZE) {
-    this.delayMs = delayMs;
+  constructor(
+    minStartGapMs: number,
+    maxConcurrent: number = DEFAULT_MAX_CONCURRENT,
+    maxQueueSize: number = DEFAULT_MAX_QUEUE_SIZE,
+  ) {
+    this.minStartGapMs = minStartGapMs;
+    this.maxConcurrent = maxConcurrent;
     this.maxQueueSize = maxQueueSize;
   }
 
-  enqueue<T>(task: () => Promise<T>, endpoint: string, params: NcbiRequestParams): Promise<T> {
-    if (this.queue.length >= this.maxQueueSize) {
+  enqueue<T>(
+    task: () => Promise<T>,
+    endpoint: string,
+    params: NcbiRequestParams,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    if (this.waiters.length >= this.maxQueueSize) {
       return Promise.reject(
         new McpError(
           JsonRpcErrorCode.RateLimited,
@@ -45,7 +73,7 @@ export class NcbiRequestQueue {
           {
             reason: 'queue_full',
             endpoint,
-            queueSize: this.queue.length,
+            queueSize: this.waiters.length,
             ...recoveryFor('queue_full'),
           },
         ),
@@ -53,71 +81,98 @@ export class NcbiRequestQueue {
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({
-        resolve: resolve as (value: unknown) => void,
+      if (signal?.aborted) {
+        reject(signal.reason);
+        return;
+      }
+
+      const waiter: Waiter<T> = {
+        resolve,
         reject,
         task,
         endpoint,
         params,
-      });
+        ...(signal && { signal }),
+      };
 
-      if (!this.processing) {
-        queueMicrotask(() => this.processQueue());
+      if (signal) {
+        const onAbort = () => {
+          const idx = this.waiters.indexOf(waiter as Waiter);
+          if (idx === -1) return; // already dispatched — the task forwards its own signal
+          this.waiters.splice(idx, 1);
+          reject(signal.reason);
+        };
+        waiter.onAbort = onAbort;
+        signal.addEventListener('abort', onAbort, { once: true });
       }
+
+      this.waiters.push(waiter as Waiter);
+      this.tryDispatch();
     });
   }
 
-  private async processQueue(): Promise<void> {
-    if (this.processing || this.queue.length === 0) return;
-    this.processing = true;
+  private tryDispatch(): void {
+    if (this.nextDispatchTimer !== undefined) return;
 
-    const item = this.queue.shift();
-    if (!item) {
-      this.processing = false;
-      return;
-    }
-    const { resolve, reject, task, endpoint } = item;
-
-    try {
+    while (this.inFlight < this.maxConcurrent && this.waiters.length > 0) {
       const now = Date.now();
-      const elapsed = now - this.lastRequestTime;
-      const wait = this.delayMs - elapsed;
-
-      if (wait > 0) {
+      const gap = this.minStartGapMs - (now - this.lastStartTime);
+      if (gap > 0) {
         logger.debug(
-          `Delaying NCBI request by ${wait}ms to respect rate limit.`,
+          `Delaying next NCBI dispatch by ${gap}ms to respect rate limit.`,
           requestContextService.createRequestContext({
             operation: 'NcbiQueueWait',
-            endpoint,
-            delayMs: wait,
+            delayMs: gap,
           }),
         );
-        await new Promise<void>((r) => setTimeout(r, wait));
+        this.nextDispatchTimer = setTimeout(() => {
+          this.nextDispatchTimer = undefined;
+          this.tryDispatch();
+        }, gap);
+        return;
       }
 
-      this.lastRequestTime = Date.now();
-      logger.info(
-        `Executing NCBI request via queue: ${endpoint}`,
-        requestContextService.createRequestContext({ operation: 'NcbiQueueDispatch', endpoint }),
-      );
+      const waiter = this.waiters.shift();
+      if (!waiter) return;
 
-      const result = await task();
-      resolve(result);
-    } catch (error: unknown) {
-      logger.error(
-        'Error processing NCBI request from queue.',
+      // Detach the cancel listener now that we're about to start; the task is
+      // responsible for forwarding its own signal to downstream I/O.
+      if (waiter.signal && waiter.onAbort) {
+        waiter.signal.removeEventListener('abort', waiter.onAbort);
+      }
+
+      this.lastStartTime = Date.now();
+      this.inFlight += 1;
+      logger.info(
+        `Executing NCBI request via queue: ${waiter.endpoint}`,
         requestContextService.createRequestContext({
-          operation: 'NcbiQueueProcess',
-          endpoint,
-          errorMessage: error instanceof Error ? error.message : String(error),
+          operation: 'NcbiQueueDispatch',
+          endpoint: waiter.endpoint,
+          inFlight: this.inFlight,
+          queueDepth: this.waiters.length,
         }),
       );
-      reject(error);
-    } finally {
-      this.processing = false;
-      if (this.queue.length > 0) {
-        queueMicrotask(() => this.processQueue());
-      }
+
+      // `Promise.resolve().then(() => task())` converts any sync throw from
+      // `task()` into a rejected promise so the finally() bookkeeping always
+      // runs.
+      Promise.resolve()
+        .then(() => waiter.task())
+        .then(waiter.resolve, (err) => {
+          logger.error(
+            'Error processing NCBI request from queue.',
+            requestContextService.createRequestContext({
+              operation: 'NcbiQueueProcess',
+              endpoint: waiter.endpoint,
+              errorMessage: err instanceof Error ? err.message : String(err),
+            }),
+          );
+          waiter.reject(err);
+        })
+        .finally(() => {
+          this.inFlight -= 1;
+          this.tryDispatch();
+        });
     }
   }
 }
