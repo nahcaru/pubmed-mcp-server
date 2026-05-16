@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-13 17:11:21
+Generated on: 2026-05-16 19:22:39
 
 ```text
 pubmed-mcp-server/
@@ -208,6 +208,7 @@ pubmed-mcp-server/
 ├── bun.lock
 ├── bunfig.toml
 ├── CHANGELOG.md
+├── CITATION.cff
 ├── CLAUDE.md
 ├── devcheck.config.json
 ├── Dockerfile
