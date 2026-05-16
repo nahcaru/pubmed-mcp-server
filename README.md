@@ -97,7 +97,7 @@ Find articles related to a source article via ELink.
 
 - Three relationship types: `similar` (content similarity), `cited_by`, `references`
 - Results enriched with title, authors, publication date, and source via ESummary
-- Similarity scores included for `similar` relationship type
+- Results returned in NCBI's relevance order
 
 ---
 

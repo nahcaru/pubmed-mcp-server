@@ -101,7 +101,7 @@ describe('findRelatedTool', () => {
     });
   });
 
-  it('sorts similar articles by score and enriches them with summaries', async () => {
+  it('uses neighbor + pubmed_pubmed linkname for similar and enriches results', async () => {
     mockELink.mockResolvedValue({
       eLinkResult: [
         {
@@ -109,10 +109,10 @@ describe('findRelatedTool', () => {
             LinkSetDb: {
               LinkName: 'pubmed_pubmed',
               Link: [
-                { Id: '12345', Score: '100' },
-                { Id: '0', Score: '90' },
-                { Id: '222', Score: '50' },
-                { Id: { '#text': '111' }, Score: { '#text': '75' } },
+                { Id: '12345' }, // source PMID — filtered out
+                { Id: '0' }, // sentinel — filtered out
+                { Id: '222' },
+                { Id: { '#text': '111' } }, // exercise the {'#text': ...} Id shape
               ],
             },
           },
@@ -122,18 +122,18 @@ describe('findRelatedTool', () => {
     mockESummary.mockResolvedValue({ eSummaryResult: {} });
     mockExtractBriefSummaries.mockResolvedValue([
       {
-        pmid: '111',
-        title: 'Higher Score Article',
-        authors: 'Smith J',
-        source: 'Nature',
-        pubDate: '2024',
-      },
-      {
         pmid: '222',
-        title: 'Lower Score Article',
+        title: 'First Related Article',
         authors: 'Jones A',
         source: 'Science',
         pubDate: '2023',
+      },
+      {
+        pmid: '111',
+        title: 'Second Related Article',
+        authors: 'Smith J',
+        source: 'Nature',
+        pubDate: '2024',
       },
     ]);
 
@@ -146,40 +146,39 @@ describe('findRelatedTool', () => {
         dbfrom: 'pubmed',
         db: 'pubmed',
         id: '12345',
+        cmd: 'neighbor',
+        linkname: 'pubmed_pubmed',
         retmode: 'xml',
-        cmd: 'neighbor_score',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(mockESummary).toHaveBeenCalledWith(
       {
         db: 'pubmed',
-        id: '111,222',
+        id: '222,111',
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(result.totalFound).toBe(2);
     expect(result.articles).toEqual([
       {
-        pmid: '111',
-        title: 'Higher Score Article',
-        authors: 'Smith J',
-        source: 'Nature',
-        pubDate: '2024',
-        score: 75,
-      },
-      {
         pmid: '222',
-        title: 'Lower Score Article',
+        title: 'First Related Article',
         authors: 'Jones A',
         source: 'Science',
         pubDate: '2023',
-        score: 50,
+      },
+      {
+        pmid: '111',
+        title: 'Second Related Article',
+        authors: 'Smith J',
+        source: 'Nature',
+        pubDate: '2024',
       },
     ]);
   });
 
-  it('uses cited_by linkname and keeps score undefined when ELink does not provide one', async () => {
+  it('uses cited_by linkname', async () => {
     mockELink.mockResolvedValue({
       eLinkResult: [
         {
@@ -222,7 +221,6 @@ describe('findRelatedTool', () => {
       authors: 'Taylor R',
       source: undefined,
       pubDate: undefined,
-      score: undefined,
     });
   });
 
@@ -359,7 +357,6 @@ describe('findRelatedTool', () => {
           authors: 'Smith J',
           source: 'Nature',
           pubDate: '2024',
-          score: 95,
         },
       ],
       totalFound: 1,

@@ -18,7 +18,6 @@ import { pmidStringSchema } from './_schemas.js';
 
 interface XmlELinkItem {
   Id: string | number | { '#text'?: string | number };
-  Score?: string | number | { '#text'?: string | number };
 }
 
 interface ELinkLinkSetDb {
@@ -75,12 +74,6 @@ export const findRelatedTool = tool('pubmed_find_related', {
             authors: z.string().optional().describe('Author string'),
             source: z.string().optional().describe('Journal source'),
             pubDate: z.string().optional().describe('Publication date'),
-            score: z
-              .number()
-              .optional()
-              .describe(
-                'NCBI relevance score (arbitrary scale, higher = more related; only present for similar)',
-              ),
           })
           .describe('Related article with enriched summary'),
       )
@@ -101,50 +94,41 @@ export const findRelatedTool = tool('pubmed_find_related', {
       relationship: input.relationship,
     });
 
-    const eLinkParams: Record<string, string> = {
-      dbfrom: 'pubmed',
-      db: 'pubmed',
-      id: input.pmid,
-      retmode: 'xml',
-    };
-    switch (input.relationship) {
-      case 'similar':
-        eLinkParams.cmd = 'neighbor_score';
-        break;
-      case 'cited_by':
-        eLinkParams.cmd = 'neighbor';
-        eLinkParams.linkname = 'pubmed_pubmed_citedin';
-        break;
-      case 'references':
-        eLinkParams.cmd = 'neighbor';
-        eLinkParams.linkname = 'pubmed_pubmed_refs';
-        break;
-    }
+    // `cmd=neighbor_score` is unstable on NCBI's side — it intermittently fails
+    // with a TXCLIENT::readAll EOF for high-traffic PMIDs. `cmd=neighbor` returns
+    // the `pubmed_pubmed` list in relevance order anyway, so we keep the ranking
+    // without the (arbitrary-scale) numeric score.
+    const linkName =
+      input.relationship === 'cited_by'
+        ? 'pubmed_pubmed_citedin'
+        : input.relationship === 'references'
+          ? 'pubmed_pubmed_refs'
+          : 'pubmed_pubmed';
 
-    const eLinkResult = (await ncbi.eLink(eLinkParams, { signal: ctx.signal })) as ELinkResponse;
+    const eLinkResult = (await ncbi.eLink(
+      {
+        dbfrom: 'pubmed',
+        db: 'pubmed',
+        id: input.pmid,
+        cmd: 'neighbor',
+        linkname: linkName,
+        retmode: 'xml',
+      },
+      { signal: ctx.signal },
+    )) as ELinkResponse;
     const eLinkResultsArray = ensureArray(eLinkResult?.eLinkResult);
     const firstResult = eLinkResultsArray[0] as ELinkResultItem | undefined;
     const linkSet = firstResult?.LinkSet;
-    let foundPmids: { pmid: string; score?: number }[] = [];
+    let foundPmids: string[] = [];
 
     if (linkSet?.LinkSetDb) {
       const linkSetDbArray = ensureArray(linkSet.LinkSetDb);
-      const expectedLinkName =
-        input.relationship === 'cited_by'
-          ? 'pubmed_pubmed_citedin'
-          : input.relationship === 'references'
-            ? 'pubmed_pubmed_refs'
-            : 'pubmed_pubmed';
-      const targetDb =
-        linkSetDbArray.find((db) => db.LinkName === expectedLinkName) ?? linkSetDbArray[0];
+      const targetDb = linkSetDbArray.find((db) => db.LinkName === linkName) ?? linkSetDbArray[0];
 
       if (targetDb?.Link) {
         foundPmids = ensureArray(targetDb.Link)
-          .map((link: XmlELinkItem) => ({
-            pmid: extractValue(link.Id),
-            ...(extractValue(link.Score) ? { score: Number(extractValue(link.Score)) } : {}),
-          }))
-          .filter((item) => item.pmid && item.pmid !== input.pmid && item.pmid !== '0');
+          .map((link: XmlELinkItem) => extractValue(link.Id))
+          .filter((pmid) => pmid && pmid !== input.pmid && pmid !== '0');
       }
     }
 
@@ -200,30 +184,25 @@ export const findRelatedTool = tool('pubmed_find_related', {
       };
     }
 
-    if (foundPmids.every((p) => p.score !== undefined)) {
-      foundPmids.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-    }
-
     const pmidsToEnrich = foundPmids.slice(0, input.maxResults);
     const summaryResult = await ncbi.eSummary(
       {
         db: 'pubmed',
-        id: pmidsToEnrich.map((p) => p.pmid).join(','),
+        id: pmidsToEnrich.join(','),
       },
       { signal: ctx.signal },
     );
     const briefSummaries = await extractBriefSummaries(summaryResult);
     const summaryMap = new Map(briefSummaries.map((bs) => [bs.pmid, bs]));
 
-    const articles = pmidsToEnrich.map((p) => {
-      const details = summaryMap.get(p.pmid);
+    const articles = pmidsToEnrich.map((pmid) => {
+      const details = summaryMap.get(pmid);
       return {
-        pmid: p.pmid,
+        pmid,
         title: details?.title,
         authors: details?.authors,
         source: details?.source,
         pubDate: details?.pubDate,
-        score: p.score,
       };
     });
 
@@ -240,10 +219,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
       if (!result.notice) lines.push('No related articles found.');
     } else {
       for (const a of result.articles) {
-        const scorePart = a.score !== undefined ? ` (score: ${a.score})` : '';
-        lines.push(
-          `- **[PMID ${a.pmid}](https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/)**${scorePart}`,
-        );
+        lines.push(`- **[PMID ${a.pmid}](https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/)**`);
         if (a.title) lines.push(`  ${a.title}`);
         if (a.authors) lines.push(`  *${a.authors}*`);
         const meta = [a.source, a.pubDate].filter(Boolean).join(', ');
