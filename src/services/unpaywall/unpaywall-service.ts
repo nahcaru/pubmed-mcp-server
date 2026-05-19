@@ -8,7 +8,7 @@
  * @module src/services/unpaywall/unpaywall-service
  */
 
-import { serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import {
   fetchWithTimeout,
   httpErrorFromResponse,
@@ -50,6 +50,11 @@ export class UnpaywallService {
     const url = `${UNPAYWALL_API_BASE}/${encodeURIComponent(normalized)}?email=${encodeURIComponent(this.email)}`;
     const ctx = requestContextService.createRequestContext({ operation: 'UnpaywallResolve', doi });
 
+    // `fetchWithTimeout` throws on any non-2xx response, so the explicit
+    // `response.status === 404` / `=== 422` checks the API actually returns
+    // arrive as `McpError(NotFound)` / `McpError(ValidationError)` here, not as
+    // a response object. Translate those into the documented `no-oa` outcomes
+    // before falling back to the service-unavailable wrap.
     let response: Response;
     try {
       response = await fetchWithTimeout(url, this.timeoutMs, ctx, {
@@ -57,6 +62,14 @@ export class UnpaywallService {
         ...(signal && { signal }),
       });
     } catch (error: unknown) {
+      if (error instanceof McpError) {
+        if (error.code === JsonRpcErrorCode.NotFound) {
+          return { kind: 'no-oa', reason: 'DOI unknown to Unpaywall' };
+        }
+        if (error.code === JsonRpcErrorCode.ValidationError) {
+          return { kind: 'no-oa', reason: 'Invalid DOI format' };
+        }
+      }
       const msg = error instanceof Error ? error.message : String(error);
       throw serviceUnavailable(
         `Unpaywall request failed: ${msg}`,
@@ -67,18 +80,6 @@ export class UnpaywallService {
         },
         { cause: error },
       );
-    }
-
-    if (response.status === 404) return { kind: 'no-oa', reason: 'DOI unknown to Unpaywall' };
-    if (response.status === 422) return { kind: 'no-oa', reason: 'Invalid DOI format' };
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => '');
-      throw await httpErrorFromResponse(response, {
-        service: 'Unpaywall',
-        captureBody: false,
-        data: { doi: normalized, body: body.substring(0, 300) },
-      });
     }
 
     const data = (await response.json()) as UnpaywallResponse;

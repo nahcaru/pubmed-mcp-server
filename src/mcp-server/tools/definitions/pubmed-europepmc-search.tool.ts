@@ -1,0 +1,257 @@
+/**
+ * @fileoverview Europe PMC search tool. Surfaces records PubMed-only search
+ * can't reach: preprints (source `PPR`), Agricola (`AGR`), patents (`PAT`),
+ * and EPMC-only OA articles. Uses EPMC's cursor-based pagination
+ * (`cursorMark`) — unlike `pubmed_search_articles`'s offset-based paging,
+ * because EPMC's search API doesn't support offset.
+ *
+ * Only registered when `EUROPEPMC_ENABLED=true` (the default). The handler
+ * fails fast with a configuration error if the service is unset, since the
+ * tool wouldn't be registered in that case.
+ *
+ * @module src/mcp-server/tools/definitions/pubmed-europepmc-search.tool
+ */
+
+import { tool, z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { EUROPEPMC_SERVICE_ERRORS } from '@/services/error-contracts.js';
+import { getEuropePmcService } from '@/services/europe-pmc/europe-pmc-service.js';
+import {
+  EUROPEPMC_ALL_SOURCES,
+  EUROPEPMC_DEFAULT_SOURCES,
+  type EuropePmcSource,
+} from '@/services/europe-pmc/types.js';
+import {
+  conceptMeta,
+  EDAM_DATABASE_SEARCH,
+  EDAM_PUBMED_ID,
+  SCHEMA_SEARCH_ACTION,
+} from './_concepts.js';
+
+const SourceEnum = z.enum(['MED', 'PMC', 'PPR', 'PAT', 'AGR']);
+
+// ─── Tool Definition ─────────────────────────────────────────────────────────
+
+export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
+  description:
+    'Search Europe PMC, a broad open-access biomedical corpus. Surfaces preprints (`source: PPR`), patents (`source: PAT`), Agricola (`source: AGR`), plus everything in PubMed (`MED`) and PMC. Use when additional coverage is needed — preprints and EPMC-only OA records are the typical recovery. Paginate via `cursorMark`. Defaults to `MED`, `PMC`, and `PPR`; pass `sources` to include `PAT` / `AGR`.',
+  annotations: { readOnlyHint: true, openWorldHint: true },
+  _meta: conceptMeta([SCHEMA_SEARCH_ACTION, EDAM_DATABASE_SEARCH, EDAM_PUBMED_ID]),
+  sourceUrl:
+    'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/pubmed-europepmc-search.tool.ts',
+
+  errors: [
+    ...EUROPEPMC_SERVICE_ERRORS,
+    {
+      reason: 'europepmc_disabled',
+      code: JsonRpcErrorCode.ConfigurationError,
+      when: 'Europe PMC service is disabled via EUROPEPMC_ENABLED=false.',
+      recovery: 'Set EUROPEPMC_ENABLED=true (the default) and restart the server to use this tool.',
+    },
+  ] as const,
+
+  input: z.object({
+    query: z
+      .string()
+      .min(1)
+      .describe(
+        'Europe PMC search query. Supports field tokens like `AUTH:"<name>"`, `JOURNAL:"<title>"`, `TITLE:"<words>"`, `PUB_YEAR:[2020 TO 2024]`, `DOI:"..."`, `EXT_ID:"<pmid>" AND SRC:MED`. Free text is matched broadly across abstract/title/keywords.',
+      ),
+    pageSize: z
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(25)
+      .describe('Results per page. Max 100 per EPMC API.'),
+    cursorMark: z
+      .string()
+      .default('*')
+      .describe(
+        "Pagination cursor. Use `*` (default) for the first page; pass the previous response's `nextCursorMark` for subsequent pages.",
+      ),
+    sources: z
+      .array(SourceEnum)
+      .min(1)
+      .optional()
+      .describe(
+        `Filter to specific EPMC sources. Defaults to ${EUROPEPMC_DEFAULT_SOURCES.join(', ')} when omitted. Pass an explicit array including PAT or AGR to broaden coverage. Allowed values: ${EUROPEPMC_ALL_SOURCES.join(', ')}.`,
+      ),
+    resultType: z
+      .enum(['core', 'lite'])
+      .default('core')
+      .describe(
+        '`core` returns abstract, IDs, dates, license; `lite` is a smaller payload with IDs and titles only.',
+      ),
+    sort: z
+      .string()
+      .optional()
+      .describe(
+        'Optional EPMC sort spec, e.g. `FIRST_PIDATE desc` (newest first) or `CITED desc` (most cited). Omit for relevance order.',
+      ),
+  }),
+
+  output: z.object({
+    query: z.string().describe('Effective query string echoed by Europe PMC'),
+    hits: z
+      .array(
+        z
+          .object({
+            source: SourceEnum.describe(
+              'Europe PMC source — `MED` (PubMed), `PMC` (PubMed Central), `PPR` (preprint), `PAT` (patent), `AGR` (Agricola)',
+            ),
+            epmcId: z
+              .string()
+              .describe("Europe PMC's internal record id; key for `fullTextXML` lookup"),
+            title: z.string().optional().describe('Article title'),
+            authors: z.string().optional().describe('Formatted author string'),
+            journal: z.string().optional().describe('Journal title'),
+            pubYear: z.string().optional().describe('Publication year'),
+            firstPublicationDate: z
+              .string()
+              .optional()
+              .describe('First publication date (ISO YYYY-MM-DD)'),
+            pmid: z.string().optional().describe('PMID when present in PubMed'),
+            pmcId: z.string().optional().describe('PMC ID when present in PMC'),
+            doi: z.string().optional().describe('DOI when present'),
+            isOpenAccess: z
+              .boolean()
+              .optional()
+              .describe('Whether EPMC reports the record as open access'),
+            hasFullTextXml: z
+              .boolean()
+              .optional()
+              .describe(
+                'Whether Europe PMC publishes a fullTextXML for this record. Derived from `inPMC` — only records with a PMC counterpart have JATS via EPMC; preprints (`PPR`) and MED-only records return false.',
+              ),
+            abstractSnippet: z
+              .string()
+              .optional()
+              .describe(
+                'First few hundred characters of the abstract when `resultType: "core"` is requested',
+              ),
+            citedByCount: z.number().optional().describe('Citation count reported by Europe PMC'),
+            epmcUrl: z.string().describe('Europe PMC article URL'),
+          })
+          .describe('Single Europe PMC record returned by the search'),
+      )
+      .describe('Matching Europe PMC records, in the order EPMC returned them'),
+    hitCount: z.number().describe('Total matching records across all pages'),
+    cursorMark: z.string().describe('Cursor used for this response (echoed from the request)'),
+    nextCursorMark: z
+      .string()
+      .optional()
+      .describe('Cursor to pass back as `cursorMark` for the next page. Absent on the final page.'),
+    appliedSources: z
+      .array(SourceEnum)
+      .describe('Sources the query was filtered against (defaults applied)'),
+    searchUrl: z.string().describe("Europe PMC's website search URL for this query"),
+    notice: z
+      .string()
+      .optional()
+      .describe('Optional guidance when results are empty or paging overshot'),
+  }),
+
+  async handler(input, ctx) {
+    ctx.log.info('Executing pubmed_europepmc_search', { query: input.query });
+    const epmc = getEuropePmcService();
+    if (!epmc) {
+      throw ctx.fail(
+        'europepmc_disabled',
+        'Europe PMC service is not available. Set EUROPEPMC_ENABLED=true to use this tool.',
+        { ...ctx.recoveryFor('europepmc_disabled') },
+      );
+    }
+
+    const sources = (input.sources ?? EUROPEPMC_DEFAULT_SOURCES) as readonly EuropePmcSource[];
+    const result = await epmc.search({
+      query: input.query,
+      resultType: input.resultType,
+      pageSize: input.pageSize,
+      cursorMark: input.cursorMark,
+      sources,
+      ...(input.sort && { sort: input.sort }),
+      ...(ctx.signal && { signal: ctx.signal }),
+    });
+
+    const hits = result.hits.map((h) => ({
+      source: h.source as 'MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR',
+      epmcId: h.id,
+      ...(h.title && { title: h.title }),
+      ...(h.authorString && { authors: h.authorString }),
+      ...(h.journalTitle && { journal: h.journalTitle }),
+      ...(h.pubYear && { pubYear: h.pubYear }),
+      ...(h.firstPublicationDate && { firstPublicationDate: h.firstPublicationDate }),
+      ...(h.pmid && { pmid: h.pmid }),
+      ...(h.pmcid && { pmcId: h.pmcid }),
+      ...(h.doi && { doi: h.doi }),
+      ...(h.isOpenAccess !== undefined && { isOpenAccess: h.isOpenAccess === 'Y' }),
+      ...(h.inPMC !== undefined && { hasFullTextXml: h.inPMC === 'Y' }),
+      ...(h.abstractText && {
+        abstractSnippet:
+          h.abstractText.length > 400 ? `${h.abstractText.slice(0, 400)}…` : h.abstractText,
+      }),
+      ...(typeof h.citedByCount === 'number' && { citedByCount: h.citedByCount }),
+      epmcUrl: `https://europepmc.org/article/${h.source}/${h.id}`,
+    }));
+
+    const notice =
+      result.hitCount === 0
+        ? 'No results matched your Europe PMC query. Try broadening the query, removing source filters, or running pubmed_spell_check on the term.'
+        : undefined;
+
+    ctx.log.info('pubmed_europepmc_search completed', {
+      hitCount: result.hitCount,
+      returnedHits: hits.length,
+      hasNextPage: !!result.nextCursorMark,
+    });
+
+    return {
+      query: result.query,
+      hits,
+      hitCount: result.hitCount,
+      cursorMark: result.cursorMark ?? '*',
+      ...(result.nextCursorMark && { nextCursorMark: result.nextCursorMark }),
+      appliedSources: [...sources] as ('MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR')[],
+      searchUrl: `https://europepmc.org/search?query=${encodeURIComponent(input.query)}`,
+      ...(notice && { notice }),
+    };
+  },
+
+  format: (result) => {
+    const lines = [
+      '## Europe PMC Search Results',
+      `**Query:** ${result.query}`,
+      `**Total Hits:** ${result.hitCount} | **Returned:** ${result.hits.length}`,
+      `**Sources:** ${result.appliedSources.join(', ')}`,
+      `**Cursor:** ${result.cursorMark}${result.nextCursorMark ? ` → \`${result.nextCursorMark}\` (next page)` : ' (final page)'}`,
+      `**Search URL:** ${result.searchUrl}`,
+    ];
+    if (result.notice) lines.push(`\n> ${result.notice}`);
+
+    if (result.hits.length > 0) {
+      lines.push('\n### Hits');
+      for (const h of result.hits) {
+        lines.push(`\n#### ${h.title ?? h.epmcId}`);
+        lines.push(`**Source:** ${h.source} | **EPMC ID:** ${h.epmcId}`);
+        if (h.authors) lines.push(`**Authors:** ${h.authors}`);
+        if (h.journal) lines.push(`**Journal:** ${h.journal}`);
+        if (h.firstPublicationDate) lines.push(`**Published:** ${h.firstPublicationDate}`);
+        if (h.pubYear) lines.push(`**Year:** ${h.pubYear}`);
+        if (h.pmid) lines.push(`**PMID:** ${h.pmid}`);
+        if (h.pmcId) lines.push(`**PMCID:** ${h.pmcId}`);
+        if (h.doi) lines.push(`**DOI:** ${h.doi}`);
+        if (h.isOpenAccess !== undefined)
+          lines.push(`**Open Access:** ${h.isOpenAccess ? 'yes' : 'no'}`);
+        if (h.hasFullTextXml !== undefined) {
+          lines.push(`**Full-text XML in EPMC:** ${h.hasFullTextXml ? 'yes' : 'no'}`);
+        }
+        if (typeof h.citedByCount === 'number') lines.push(`**Cited by:** ${h.citedByCount}`);
+        lines.push(`**URL:** ${h.epmcUrl}`);
+        if (h.abstractSnippet) lines.push(`\n${h.abstractSnippet}`);
+      }
+    }
+
+    return [{ type: 'text', text: lines.join('\n') }];
+  },
+});

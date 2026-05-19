@@ -1,12 +1,12 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cyanheads/pubmed-mcp-server",
-  "description": "Search PubMed, fetch articles and full text, generate citations, and explore MeSH terms via NCBI.",
+  "description": "Search PubMed/Europe PMC, fetch articles and full text (PMC/EPMC/Unpaywall), citations, MeSH terms.",
   "repository": {
     "url": "https://github.com/cyanheads/pubmed-mcp-server",
     "source": "github"
   },
-  "version": "2.6.12",
+  "version": "2.7.0",
   "remotes": [
     {
       "type": "streamable-http",
@@ -19,7 +19,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pubmed-mcp-server",
       "runtimeHint": "bun",
-      "version": "2.6.12",
+      "version": "2.7.0",
       "packageArguments": [
         {
           "type": "positional",
@@ -66,7 +66,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/pubmed-mcp-server",
       "runtimeHint": "bun",
-      "version": "2.6.12",
+      "version": "2.7.0",
       "packageArguments": [
         {
           "type": "positional",

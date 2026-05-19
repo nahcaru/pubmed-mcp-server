@@ -3,6 +3,7 @@
  * @module tests/services/unpaywall/unpaywall-service.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockFetchWithTimeout = vi.fn();
@@ -80,11 +81,25 @@ describe('UnpaywallService.resolve', () => {
   });
 
   it('returns `no-oa` when Unpaywall returns 404 for an unknown DOI', async () => {
-    mockFetchWithTimeout.mockResolvedValue(new Response('not found', { status: 404 }));
+    // fetchWithTimeout throws on any non-2xx response — a 404 surfaces as a
+    // thrown McpError(NotFound), never as a returned Response.
+    mockFetchWithTimeout.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.NotFound, 'Fetch failed for ...; Status: 404'),
+    );
     const service = new UnpaywallService('oa@example.com', 20000);
 
     const result = await service.resolve('10.0000/unknown');
     expect(result).toEqual({ kind: 'no-oa', reason: 'DOI unknown to Unpaywall' });
+  });
+
+  it('returns `no-oa` when Unpaywall returns 422 for an invalid DOI format', async () => {
+    mockFetchWithTimeout.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ValidationError, 'Fetch failed for ...; Status: 422'),
+    );
+    const service = new UnpaywallService('oa@example.com', 20000);
+
+    const result = await service.resolve('10.0000/malformed');
+    expect(result).toEqual({ kind: 'no-oa', reason: 'Invalid DOI format' });
   });
 
   it('returns `no-oa` when the DOI is invalid shape', async () => {
@@ -104,10 +119,12 @@ describe('UnpaywallService.resolve', () => {
   });
 
   it('throws ServiceUnavailable on 5xx', async () => {
-    mockFetchWithTimeout.mockResolvedValue(new Response('down', { status: 503 }));
+    mockFetchWithTimeout.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Fetch failed for ...; Status: 503'),
+    );
     const service = new UnpaywallService('oa@example.com', 20000);
 
-    await expect(service.resolve('10.1000/example')).rejects.toThrow(/HTTP 503/);
+    await expect(service.resolve('10.1000/example')).rejects.toThrow(/Status: 503/);
   });
 
   it('throws ServiceUnavailable on network errors', async () => {

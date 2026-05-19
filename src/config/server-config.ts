@@ -15,6 +15,21 @@ import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
  */
 const emptyAsUndefined = (v: unknown) => (v === '' ? undefined : v);
 
+/**
+ * Parse a string env var as a boolean. `z.coerce.boolean()` is unusable for
+ * env vars because it applies JavaScript truthy semantics — `"false"` coerces
+ * to `true`. This mirrors the framework's `envBoolean` so `EUROPEPMC_ENABLED=false`
+ * actually disables the service.
+ */
+const envBoolean = z.preprocess((v) => {
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === '1') return true;
+    if (s === 'false' || s === '0' || s === '') return false;
+  }
+  return v;
+}, z.boolean());
+
 const ServerConfigSchema = z.object({
   apiKey: z.preprocess(emptyAsUndefined, z.string().optional()).describe('NCBI API key'),
   toolIdentifier: z.string().default('pubmed-mcp-server').describe('NCBI tool identifier'),
@@ -48,6 +63,32 @@ const ServerConfigSchema = z.object({
     .max(120000)
     .default(20000)
     .describe('Per-request HTTP timeout for Unpaywall lookups and content fetches, in ms'),
+  europepmcEnabled: envBoolean
+    .default(true)
+    .describe(
+      'Enable Europe PMC search tool and `pubmed_fetch_fulltext` JATS fallback chain. Set false to fully disable EPMC calls.',
+    ),
+  europepmcEmail: z
+    .preprocess(emptyAsUndefined, z.email().optional())
+    .describe('Optional contact email sent with Europe PMC requests'),
+  europepmcRequestDelayMs: z.coerce
+    .number()
+    .min(50)
+    .max(5000)
+    .default(200)
+    .describe('Minimum gap between Europe PMC request starts in ms'),
+  europepmcMaxRetries: z.coerce
+    .number()
+    .min(0)
+    .max(10)
+    .default(3)
+    .describe('Max retry attempts for failed Europe PMC requests'),
+  europepmcTimeoutMs: z.coerce
+    .number()
+    .min(1000)
+    .max(120000)
+    .default(20000)
+    .describe('Per-request HTTP timeout for Europe PMC calls, in ms'),
 });
 
 export type ServerConfig = z.infer<typeof ServerConfigSchema>;
@@ -67,6 +108,11 @@ export function getServerConfig(): ServerConfig {
       totalDeadlineMs: 'NCBI_TOTAL_DEADLINE_MS',
       unpaywallEmail: 'UNPAYWALL_EMAIL',
       unpaywallTimeoutMs: 'UNPAYWALL_TIMEOUT_MS',
+      europepmcEnabled: 'EUROPEPMC_ENABLED',
+      europepmcEmail: 'EUROPEPMC_EMAIL',
+      europepmcRequestDelayMs: 'EUROPEPMC_REQUEST_DELAY_MS',
+      europepmcMaxRetries: 'EUROPEPMC_MAX_RETRIES',
+      europepmcTimeoutMs: 'EUROPEPMC_TIMEOUT_MS',
     });
     /**
      * An API key raises NCBI's rate ceiling from ~3 req/s to ~10 req/s. If the

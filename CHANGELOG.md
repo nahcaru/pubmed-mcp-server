@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.0](changelog/2.7.x/2.7.0.md) — 2026-05-18 · ⚠️ Breaking
+
+New `pubmed_europepmc_search` tool surfaces preprints, patents, Agricola, and EPMC-only OA records. `pubmed_fetch_fulltext` chain expands to NCBI PMC → Europe PMC `fullTextXML` → Unpaywall with a `dois` input branch ([#52](https://github.com/cyanheads/pubmed-mcp-server/issues/52)).
+
 ## [2.6.12](changelog/2.6.x/2.6.12.md) — 2026-05-16
 
 NCBI queue wait now counts toward `totalDeadlineMs`, so a slow upstream can't backlog tools into 10+ min latencies ([#50](https://github.com/cyanheads/pubmed-mcp-server/issues/50)). `pubmed_find_related` similar switches to `cmd=neighbor` to dodge NCBI's unstable scoring backend ([#53](https://github.com/cyanheads/pubmed-mcp-server/issues/53)).

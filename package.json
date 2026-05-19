@@ -1,8 +1,8 @@
 {
   "name": "@cyanheads/pubmed-mcp-server",
-  "version": "2.6.12",
+  "version": "2.7.0",
   "mcpName": "io.github.cyanheads/pubmed-mcp-server",
-  "description": "MCP server for PubMed/NCBI E-utilities integration. Search articles, fetch metadata and open-access full text (PMC + Unpaywall), generate citations, explore MeSH terms, and discover related research.",
+  "description": "Search PubMed/Europe PMC, fetch articles and full text (PMC/EPMC/Unpaywall), citations, MeSH terms via MCP. STDIO or Streamable HTTP.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -40,7 +40,8 @@
     "e-utilities",
     "open-access",
     "full-text",
-    "unpaywall"
+    "unpaywall",
+    "europe-pmc"
   ],
   "repository": {
     "type": "git",
@@ -81,7 +82,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.0",
     "@types/sanitize-html": "^2.16.1",
     "@vitest/coverage-istanbul": "^4.1.6",
     "depcheck": "^1.4.7",

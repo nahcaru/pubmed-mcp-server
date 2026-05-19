@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-16 19:22:39
+Generated on: 2026-05-19 06:23:52
 
 ```text
 pubmed-mcp-server/
@@ -22,6 +22,7 @@ pubmed-mcp-server/
 │   ├── 2.4.x/
 │   ├── 2.5.x/
 │   ├── 2.6.x/
+│   ├── 2.7.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
@@ -137,9 +138,15 @@ pubmed-mcp-server/
 │   │           ├── format-citations.tool.ts
 │   │           ├── lookup-citation.tool.ts
 │   │           ├── lookup-mesh.tool.ts
+│   │           ├── pubmed-europepmc-search.tool.ts
 │   │           ├── search-articles.tool.ts
 │   │           └── spell-check.tool.ts
 │   ├── services/
+│   │   ├── europe-pmc/
+│   │   │   ├── api-client.ts
+│   │   │   ├── europe-pmc-service.ts
+│   │   │   ├── request-queue.ts
+│   │   │   └── types.ts
 │   │   ├── ncbi/
 │   │   │   ├── formatting/
 │   │   │   │   └── citation-formatter.ts
@@ -179,10 +186,13 @@ pubmed-mcp-server/
 │   │           ├── format-citations.tool.test.ts
 │   │           ├── lookup-citation.tool.test.ts
 │   │           ├── lookup-mesh.tool.test.ts
+│   │           ├── pubmed-europepmc-search.tool.test.ts
 │   │           ├── search-articles.tool.test.ts
 │   │           ├── spell-check.tool.test.ts
 │   │           └── tools.fuzz.test.ts
 │   ├── services/
+│   │   ├── europe-pmc/
+│   │   │   └── europe-pmc-service.test.ts
 │   │   ├── ncbi/
 │   │   │   ├── formatting/
 │   │   │   │   └── citation-formatter.test.ts

@@ -77,19 +77,42 @@ export const UNPAYWALL_SERVICE_ERRORS = [
 ] as const;
 
 /**
+ * Failure modes the Europe PMC service layer can surface. Tools that consume
+ * `getEuropePmcService()` should spread these into their `errors[]`.
+ */
+export const EUROPEPMC_SERVICE_ERRORS = [
+  {
+    reason: 'europepmc_unreachable',
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    when: 'Europe PMC was unreachable after all retry attempts.',
+    recovery:
+      'Retry after a brief delay; Europe PMC was unreachable. NCBI PMC and Unpaywall remain available.',
+    retryable: true,
+  },
+  {
+    reason: 'europepmc_invalid_response',
+    code: JsonRpcErrorCode.SerializationError,
+    when: 'Europe PMC returned a body that could not be parsed (invalid JSON or XML).',
+    recovery:
+      'Retry the request; Europe PMC returned a malformed response that could not be parsed.',
+    retryable: true,
+  },
+] as const;
+
+/**
  * Reason identifier union for type-safe authoring on the service layer.
  * Tool handlers get a tighter typed union from `ctx.fail` / `ctx.recoveryFor`
  * via the framework — this is the service-side fallback.
  */
 export type ServiceErrorReason =
   | (typeof NCBI_SERVICE_ERRORS)[number]['reason']
-  | (typeof UNPAYWALL_SERVICE_ERRORS)[number]['reason'];
+  | (typeof UNPAYWALL_SERVICE_ERRORS)[number]['reason']
+  | (typeof EUROPEPMC_SERVICE_ERRORS)[number]['reason'];
 
 const REASON_TO_RECOVERY = new Map<ServiceErrorReason, string>(
-  [...NCBI_SERVICE_ERRORS, ...UNPAYWALL_SERVICE_ERRORS].map((entry) => [
-    entry.reason,
-    entry.recovery,
-  ]),
+  [...NCBI_SERVICE_ERRORS, ...UNPAYWALL_SERVICE_ERRORS, ...EUROPEPMC_SERVICE_ERRORS].map(
+    (entry) => [entry.reason, entry.recovery],
+  ),
 );
 
 /**

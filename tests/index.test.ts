@@ -3,11 +3,13 @@
  * @module tests/index.test
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createApp = vi.fn(async () => undefined);
 const initNcbiService = vi.fn();
 const initUnpaywallService = vi.fn();
+const initEuropePmcService = vi.fn();
+const getServerConfig = vi.fn(() => ({ europepmcEnabled: true }));
 
 const searchArticlesTool = { id: 'search-articles-tool' };
 const fetchArticlesTool = { id: 'fetch-articles-tool' };
@@ -18,11 +20,20 @@ const spellCheckTool = { id: 'spell-check-tool' };
 const lookupMeshTool = { id: 'lookup-mesh-tool' };
 const lookupCitationTool = { id: 'lookup-citation-tool' };
 const convertIdsTool = { id: 'convert-ids-tool' };
+const pubmedEuropepmcSearchTool = { id: 'pubmed-europepmc-search-tool' };
 const databaseInfoResource = { id: 'database-info-resource' };
 const researchPlanPrompt = { id: 'research-plan-prompt' };
 
-vi.mock('@cyanheads/mcp-ts-core', () => ({
-  createApp,
+vi.mock('@cyanheads/mcp-ts-core', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    createApp,
+  };
+});
+
+vi.mock('@/config/server-config.js', () => ({
+  getServerConfig,
 }));
 
 vi.mock('@/services/ncbi/ncbi-service.js', () => ({
@@ -31,6 +42,10 @@ vi.mock('@/services/ncbi/ncbi-service.js', () => ({
 
 vi.mock('@/services/unpaywall/unpaywall-service.js', () => ({
   initUnpaywallService,
+}));
+
+vi.mock('@/services/europe-pmc/europe-pmc-service.js', () => ({
+  initEuropePmcService,
 }));
 
 vi.mock('@/mcp-server/prompts/definitions/research-plan.prompt.js', () => ({
@@ -77,19 +92,29 @@ vi.mock('@/mcp-server/tools/definitions/convert-ids.tool.js', () => ({
   convertIdsTool,
 }));
 
+vi.mock('@/mcp-server/tools/definitions/pubmed-europepmc-search.tool.js', () => ({
+  pubmedEuropepmcSearchTool,
+}));
+
 async function loadModule() {
   await import('@/index.js');
 }
 
 describe('server entry point', () => {
+  beforeEach(() => {
+    getServerConfig.mockReturnValue({ europepmcEnabled: true });
+  });
+
   afterEach(() => {
     createApp.mockClear();
     initNcbiService.mockClear();
     initUnpaywallService.mockClear();
+    initEuropePmcService.mockClear();
+    getServerConfig.mockClear();
     vi.resetModules();
   });
 
-  it('registers all tools, resources, and prompts with createApp', async () => {
+  it('registers all tools, resources, and prompts with createApp (EPMC enabled)', async () => {
     await loadModule();
 
     expect(createApp).toHaveBeenCalledOnce();
@@ -111,13 +136,22 @@ describe('server entry point', () => {
       lookupMeshTool,
       lookupCitationTool,
       convertIdsTool,
+      pubmedEuropepmcSearchTool,
     ]);
     expect(appConfig.resources).toEqual([databaseInfoResource]);
     expect(appConfig.prompts).toEqual([researchPlanPrompt]);
     expect(appConfig.setup).toEqual(expect.any(Function));
   });
 
-  it('initializes the NCBI and Unpaywall services in the app setup hook', async () => {
+  it('omits the EPMC search tool when EUROPEPMC_ENABLED is false', async () => {
+    getServerConfig.mockReturnValue({ europepmcEnabled: false });
+    await loadModule();
+    const appConfig = createApp.mock.calls[0]?.[0] as { tools: unknown[] };
+    expect(appConfig.tools).not.toContain(pubmedEuropepmcSearchTool);
+    expect(appConfig.tools).toHaveLength(9);
+  });
+
+  it('initializes NCBI, Unpaywall, and Europe PMC services in the app setup hook', async () => {
     await loadModule();
 
     const appConfig = createApp.mock.calls[0]?.[0] as {
@@ -128,5 +162,6 @@ describe('server entry point', () => {
 
     expect(initNcbiService).toHaveBeenCalledOnce();
     expect(initUnpaywallService).toHaveBeenCalledOnce();
+    expect(initEuropePmcService).toHaveBeenCalledOnce();
   });
 });

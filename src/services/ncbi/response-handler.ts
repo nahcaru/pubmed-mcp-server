@@ -143,7 +143,7 @@ function sanitizeNcbiError(message: string): string {
  * E-utilities use `<ERROR>` for response-level failures, while PMC EFetch
  * uses lowercase `<error id="…">` to flag a single unavailable PMCID. The
  * latter is data (a missing ID), not a transport error, so it falls through
- * to the caller which reports it via `unavailablePmcIds`.
+ * to the caller which reports it via the unified `unavailable[]` list.
  */
 const ERROR_TAG_REGEX = /<ERROR(?:\s[^>]*)?>/;
 
