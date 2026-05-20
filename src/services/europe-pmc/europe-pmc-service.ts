@@ -17,6 +17,7 @@ import {
   JsonRpcErrorCode,
   McpError,
   serializationError,
+  validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
@@ -118,6 +119,46 @@ export class EuropePmcService {
         },
         { cause: error },
       );
+    }
+
+    /**
+     * EPMC surfaces structured input errors (e.g. empty query) via `errMsg`
+     * with HTTP 200. Route to ValidationError (non-retryable) so the caller
+     * fixes the input instead of looping on the same request.
+     */
+    const errMsg = typeof parsed.errMsg === 'string' ? parsed.errMsg : undefined;
+    if (errMsg) {
+      throw validationError(`Europe PMC rejected the request: ${errMsg}`, {
+        reason: 'europepmc_invalid_input',
+        epmcErrCode: parsed.errCode,
+        epmcErrMsg: errMsg,
+        recovery: { hint: `Europe PMC reported: "${errMsg}". Fix the input and retry.` },
+      });
+    }
+
+    /**
+     * EPMC silently returns a `{ version }`-only envelope (no `hitCount`, no
+     * `request` echo, no `resultList`) when it rejects a parameter — most
+     * commonly an undocumented `sort` field. Without this guard the response
+     * normalizes to a fake 0-hit success and the caller never learns the sort
+     * was rejected. Route to ValidationError (non-retryable) since retrying
+     * the same input will be rejected again.
+     */
+    if (
+      parsed.hitCount === undefined &&
+      parsed.request === undefined &&
+      parsed.resultList === undefined
+    ) {
+      const rejectionHint = params.sort
+        ? `Europe PMC silently rejected the request. Most likely cause: invalid sort field "${params.sort}". Use a documented sort like \`P_PDATE_D desc\`, \`CITED desc\`, \`AUTH_FIRST asc\`, or \`PUB_YEAR desc\`, or omit \`sort\` for relevance ranking.`
+        : 'Europe PMC silently rejected the request (empty envelope, no hitCount). Verify query syntax, sort field, and cursorMark.';
+      throw validationError(rejectionHint, {
+        reason: 'europepmc_invalid_input',
+        ...(params.sort && { sort: params.sort }),
+        ...(params.cursorMark && params.cursorMark !== '*' && { cursorMark: params.cursorMark }),
+        responseSnippet: text.substring(0, 200),
+        recovery: { hint: rejectionHint },
+      });
     }
 
     const hits = ensureArray<EuropePmcSearchHit>(parsed.resultList?.result);

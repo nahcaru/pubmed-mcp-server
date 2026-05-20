@@ -74,6 +74,10 @@ export interface EuropePmcResultList {
  * effective query so callers can preview what EPMC actually searched.
  */
 export interface EuropePmcSearchResponse {
+  /** Structured error code on input rejection (e.g. empty query). */
+  errCode?: number | string;
+  /** Structured error message on input rejection (e.g. empty query). */
+  errMsg?: string;
   /** Total matching records across all pages. */
   hitCount?: number;
   /** Cursor token for the next page; absent on the final page. */

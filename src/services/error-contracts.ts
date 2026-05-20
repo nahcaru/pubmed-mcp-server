@@ -97,6 +97,14 @@ export const EUROPEPMC_SERVICE_ERRORS = [
       'Retry the request; Europe PMC returned a malformed response that could not be parsed.',
     retryable: true,
   },
+  {
+    reason: 'europepmc_invalid_input',
+    code: JsonRpcErrorCode.ValidationError,
+    when: 'Europe PMC rejected the request input (empty query, unknown sort field, malformed parameter).',
+    recovery:
+      'Adjust the input — usually the query or sort field — before retrying; the same input will be rejected again.',
+    retryable: false,
+  },
 ] as const;
 
 /**

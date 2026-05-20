@@ -87,7 +87,7 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
       .string()
       .optional()
       .describe(
-        'Optional EPMC sort spec, e.g. `FIRST_PIDATE desc` (newest first) or `CITED desc` (most cited). Omit for relevance order.',
+        'Optional EPMC sort: `<field> asc|desc`. Documented sortable fields: `P_PDATE_D` (publication date), `CITED` (citation count), `AUTH_FIRST` (first author surname), `PUB_YEAR` (publication year). Examples: `P_PDATE_D desc` (newest first), `CITED desc` (most cited). Omit for relevance ranking. Fields outside the documented set are rejected by EPMC.',
       ),
   }),
 

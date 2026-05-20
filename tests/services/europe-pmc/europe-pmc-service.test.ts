@@ -155,6 +155,84 @@ describe('EuropePmcService.search', () => {
     });
   });
 
+  it('throws with a sort-specific hint when EPMC silently rejects an invalid sort', async () => {
+    // EPMC returns a {version}-only envelope when sort is invalid — no hitCount,
+    // no request echo, no resultList. Without detection this falls through to
+    // hitCount: 0 and the caller thinks the query had no matches.
+    mockFetchWithTimeout.mockResolvedValue(jsonResponse({ version: '6.10' }));
+    const service = makeService();
+    await expect(
+      service.search({ query: 'cancer', sort: 'FIRST_PIDATE desc' }),
+    ).rejects.toMatchObject({
+      data: {
+        reason: 'europepmc_invalid_input',
+        sort: 'FIRST_PIDATE desc',
+        recovery: { hint: expect.stringContaining('FIRST_PIDATE desc') },
+      },
+    });
+  });
+
+  it('throws a generic hint when the empty-envelope arrives without a sort param', async () => {
+    mockFetchWithTimeout.mockResolvedValue(jsonResponse({ version: '6.10' }));
+    const service = makeService();
+    await expect(
+      service.search({ query: 'cancer', cursorMark: 'BAD_CURSOR' }),
+    ).rejects.toMatchObject({
+      data: {
+        reason: 'europepmc_invalid_input',
+        cursorMark: 'BAD_CURSOR',
+        recovery: { hint: expect.stringContaining('silently rejected') },
+      },
+    });
+  });
+
+  it('surfaces EPMC `errMsg` (e.g. empty query) instead of falling through to 0 hits', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        errCode: 400,
+        errMsg:
+          'No search criteria provided. Please provide a search criteria which is less than 1500 characters.',
+      }),
+    );
+    const service = makeService();
+    await expect(service.search({ query: '' })).rejects.toMatchObject({
+      data: {
+        reason: 'europepmc_invalid_input',
+        epmcErrCode: 400,
+        epmcErrMsg: expect.stringContaining('No search criteria'),
+        recovery: { hint: expect.stringContaining('No search criteria') },
+      },
+    });
+  });
+
+  it('treats a legitimate 0-hit response as success (not silent rejection)', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        hitCount: 0,
+        request: { queryString: 'foo', cursorMark: '*' },
+        resultList: { result: [] },
+      }),
+    );
+    const service = makeService();
+    const result = await service.search({ query: 'foo' });
+    expect(result.hitCount).toBe(0);
+    expect(result.hits).toEqual([]);
+  });
+
+  it('passes a sort param through to EPMC in the URL', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        hitCount: 1,
+        request: { queryString: 'cancer', cursorMark: '*', sort: 'CITED desc' },
+        resultList: { result: [{ id: '1', source: 'MED' }] },
+      }),
+    );
+    const service = makeService();
+    await service.search({ query: 'cancer', sort: 'CITED desc' });
+    const url = mockFetchWithTimeout.mock.calls[0]?.[0] as string;
+    expect(url).toContain('sort=CITED+desc');
+  });
+
   it('throws ServiceUnavailable on 5xx', async () => {
     mockFetchWithTimeout.mockResolvedValue(new Response('down', { status: 503 }));
     const service = makeService();
