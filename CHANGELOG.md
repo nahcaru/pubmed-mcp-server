@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.1](changelog/2.7.x/2.7.1.md) — 2026-05-19
+
+`pubmed_europepmc_search` now surfaces silent EPMC rejections (invalid `sort` field, empty query) as `ValidationError` instead of falling through to a fake 0-hit response.
+
 ## [2.7.0](changelog/2.7.x/2.7.0.md) — 2026-05-18 · ⚠️ Breaking
 
 New `pubmed_europepmc_search` tool surfaces preprints, patents, Agricola, and EPMC-only OA records. `pubmed_fetch_fulltext` chain expands to NCBI PMC → Europe PMC `fullTextXML` → Unpaywall with a `dois` input branch ([#52](https://github.com/cyanheads/pubmed-mcp-server/issues/52)).

@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-19 06:23:52
+Generated on: 2026-05-20 03:15:57
 
 ```text
 pubmed-mcp-server/
@@ -14,6 +14,7 @@ pubmed-mcp-server/
 ├── .vscode/
 │   ├── extensions.json
 │   └── settings.json
+├── announcements/
 ├── changelog/
 │   ├── 2.0.x/
 │   ├── 2.1.x/
