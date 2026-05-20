@@ -82,7 +82,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.15",
-    "@types/node": "^25.9.0",
+    "@types/node": "^25.9.1",
     "@types/sanitize-html": "^2.16.1",
     "@vitest/coverage-istanbul": "^4.1.6",
     "depcheck": "^1.4.7",
