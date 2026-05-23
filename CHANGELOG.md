@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.3](changelog/2.7.x/2.7.3.md) — 2026-05-22
+
+Framework `^0.9.3 → ^0.9.4`. Documents opt-in `MCP_GC_PRESSURE_INTERVAL_MS` for HTTP heap-growth mitigation.
+
 ## [2.7.2](changelog/2.7.x/2.7.2.md) — 2026-05-22
 
 Framework `^0.9.1 → ^0.9.3` (zod peer-dep migration). MCPB bundle scaffolding (`manifest.json` + install badges). `fast-xml-parser` unpinned to `^5.8.0` (closes #55).
