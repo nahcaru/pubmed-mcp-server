@@ -15,7 +15,7 @@
 
 <div align="center">
 
-[![Install in Claude Desktop](https://img.shields.io/badge/Install_in-Claude_Desktop-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://github.com/cyanheads/pubmed-mcp-server/releases/latest/download/pubmed-mcp-server.mcpb) [![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=pubmed-mcp-server&config=eyJjb21tYW5kIjoibnB4IC15IEBjeWFuaGVhZHMvcHVibWVkLW1jcC1zZXJ2ZXIifQ%3D%3D) [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode:mcp/install?%7B%22name%22%3A%22pubmed-mcp-server%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40cyanheads%2Fpubmed-mcp-server%22%5D%7D)
+[![Install in Claude Desktop](https://img.shields.io/badge/Install_in-Claude_Desktop-D97757?style=for-the-badge&logo=anthropic&logoColor=white)](https://github.com/cyanheads/pubmed-mcp-server/releases/latest/download/pubmed-mcp-server.mcpb) [![Install in Cursor](https://cursor.com/deeplink/mcp-install-dark.svg)](https://cursor.com/en/install-mcp?name=pubmed-mcp-server&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsIkBjeWFuaGVhZHMvcHVibWVkLW1jcC1zZXJ2ZXIiXX0=) [![Install in VS Code](https://img.shields.io/badge/VS_Code-Install_Server-0098FF?style=for-the-badge&logo=visualstudiocode&logoColor=white)](https://vscode.dev/redirect?url=vscode:mcp/install?%7B%22name%22%3A%22pubmed-mcp-server%22%2C%22command%22%3A%22npx%22%2C%22args%22%3A%5B%22-y%22%2C%22%40cyanheads%2Fpubmed-mcp-server%22%5D%7D)
 
 [![Framework](https://img.shields.io/badge/Built%20on-@cyanheads/mcp--ts--core-67E8F9?style=flat-square)](https://www.npmjs.com/package/@cyanheads/mcp-ts-core)
 
@@ -94,7 +94,7 @@ Fetch full-text articles via a three-stage chain: NCBI PMC EFetch → Europe PMC
 
 Search Europe PMC (EBI/EMBL-EBI), a broader open-access biomedical corpus than PubMed alone.
 
-- Surfaces records PubMed search can't reach: preprints (`source: PPR`), patents (`source: PAT`), Agricola (`source: AGR`), plus everything in PubMed (`MED`) and PMC (`PMC`)
+- Surfaces records PubMed search can't reach — preprints (`source: PPR`), patents (`source: PAT`), Agricola (`source: AGR`), plus everything in PubMed (`MED`) and PMC (`PMC`). On recent queries this can mean dozens of relevant hits with zero PubMed overlap.
 - Default sources `["MED", "PMC", "PPR"]`; pass `sources` to include `PAT` / `AGR`
 - Cursor-based pagination via `cursorMark` (unlike `pubmed_search_articles`, which uses offset) — `*` for the first page, return `nextCursorMark` for the next
 - Output discriminator on `source` plus optional `pmid` / `pmcId` / `doi` cross-walking
@@ -162,7 +162,7 @@ Convert between article identifiers (DOI, PMID, PMCID) using the PMC ID Converte
 - Batch up to 50 IDs per request
 - Accepts DOIs, PMIDs, or PMCIDs (all IDs must be the same type)
 - Only resolves articles indexed in PubMed Central
-- Returns all available identifier mappings for each input ID
+- Per-ID success/error reporting — partial batches return resolved mappings alongside structured errors for unresolvable IDs, not a batch-level failure
 
 ## Resource and prompt
 
@@ -188,6 +188,12 @@ PubMed-specific:
 - Sequential request queue with configurable delay for NCBI rate limit compliance
 - NCBI-specific XML parser with `isArray` hints for PubMed's inconsistent XML structure
 - Hand-rolled citation formatters (APA, MLA, BibTeX, RIS) — zero deps, Workers-compatible
+
+Agent-friendly output:
+
+- Provenance on every response — source labels, license fields, best-effort warnings on Unpaywall results, and effective-query echo on searches so agents can reason about trust
+- Graceful partial failure — batch tools return per-item success/error rows instead of failing the request, with structured status codes and actionable next-step text
+- Discriminated output contracts — `source: "pmc" | "unpaywall"`, typed `unavailable` reasons, `viaSource` and `triedTiers` fields — callers branch on data, not string parsing
 
 ## Getting started
 
