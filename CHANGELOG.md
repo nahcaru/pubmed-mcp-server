@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.4](changelog/2.7.x/2.7.4.md) — 2026-05-23
+
+Framework `^0.9.4 → ^0.9.6`. `.mcpbignore` recursive-match fix. Skills synced.
+
 ## [2.7.3](changelog/2.7.x/2.7.3.md) — 2026-05-22
 
 Framework `^0.9.3 → ^0.9.4`. Documents opt-in `MCP_GC_PRESSURE_INTERVAL_MS` for HTTP heap-growth mitigation.
