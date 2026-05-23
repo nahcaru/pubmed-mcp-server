@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.2](changelog/2.7.x/2.7.2.md) — 2026-05-22
+
+Framework `^0.9.1 → ^0.9.3` (zod peer-dep migration). MCPB bundle scaffolding (`manifest.json` + install badges). `fast-xml-parser` unpinned to `^5.8.0` (closes #55).
+
 ## [2.7.1](changelog/2.7.x/2.7.1.md) — 2026-05-19
 
 `pubmed_europepmc_search` now surfaces silent EPMC rejections (invalid `sort` field, empty query) as `ValidationError` instead of falling through to a fake 0-hit response.

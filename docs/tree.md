@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-20 03:15:57
+Generated on: 2026-05-23 04:31:55
 
 ```text
 pubmed-mcp-server/
@@ -46,6 +46,8 @@ pubmed-mcp-server/
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
+│   ├── lint-packaging.ts
+│   ├── list-skills.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
 ├── skills/
@@ -214,6 +216,7 @@ pubmed-mcp-server/
 ├── .dockerignore
 ├── .env.example
 ├── .gitignore
+├── .mcpbignore
 ├── AGENTS.md
 ├── biome.json
 ├── bun.lock
@@ -224,6 +227,7 @@ pubmed-mcp-server/
 ├── devcheck.config.json
 ├── Dockerfile
 ├── LICENSE
+├── manifest.json
 ├── package.json
 ├── README.md
 ├── server.json

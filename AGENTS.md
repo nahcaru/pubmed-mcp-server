@@ -2,7 +2,7 @@
 
 **Server:** @cyanheads/pubmed-mcp-server
 **Version:** 2.6.12
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.1`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.3`
 **Engines:** Bun ≥1.3.2, Node ≥24.0.0
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -262,7 +262,7 @@ Available skills:
 | `devcheck` | Lint, format, typecheck, audit |
 | `polish-docs-meta` | Finalize docs, README, metadata, and agent protocol for shipping |
 | `maintenance` | Investigate changelogs, adopt upstream changes, and sync skills after `bun update --latest` |
-| `release-and-publish` | Ship a release: verification gate, push commits+tags, publish to npm / MCP Registry / GHCR |
+| `release-and-publish` | Ship a release: verification gate, push commits+tags, publish to npm / MCP Registry / GHCR / `.mcpb` bundle on GitHub Releases |
 | `api-auth` | Auth modes, scopes, JWT/OAuth |
 | `api-canvas` | DataCanvas: register tabular data, run SQL, export, plus the `spillover()` helper for big result sets — Tier 3 opt-in |
 | `api-config` | AppConfig, parseConfig, env vars |
@@ -288,19 +288,31 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run build` | Compile TypeScript |
 | `bun run rebuild` | Clean + build |
 | `bun run clean` | Remove build artifacts |
-| `bun run devcheck` | Lint + format + typecheck + security |
+| `bun run devcheck` | Lint + format + typecheck + security + packaging alignment |
+| `bun run audit:refresh` | Delete `bun.lock`, reinstall, and re-run `bun audit`. Use when `devcheck` flags a transitive advisory — `bun update` is sticky on transitive resolutions, so the advisory may be a stale-lockfile false positive. If it survives the refresh, it's real. |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting |
 | `bun run test` | Run tests |
 | `bun run lint:mcp` | Validate MCP definitions against spec |
+| `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
+| `bun run list-skills` | List skills in `skills/` with name + description |
+| `bun run bundle` | Build and pack as `dist/pubmed-mcp-server.mcpb` for one-click Claude Desktop install |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |
 
 ---
 
+## Bundling
+
+`bun run bundle` produces `dist/pubmed-mcp-server.mcpb` for one-click install in Claude Desktop. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/pubmed-mcp-server.mcpb` URL that powers the README install badge.
+
+**Adding an env var requires both files**: `server.json` stdio `environmentVariables[]` (registry discovery) and `manifest.json` `mcp_config.env` (bundle install UX, plus `user_config` if user-prompted). `bun run lint:packaging` (run by `devcheck`) verifies the env var names align.
+
+---
+
 ## Publishing
 
-Run the `release-and-publish` skill after git wrapup — it runs the verification gate (`devcheck`, `rebuild`, `test`), pushes commits and tags, and publishes to npm, the MCP Registry, and GHCR, halting on the first failure. For reference, the underlying commands are:
+Run the `release-and-publish` skill after git wrapup — it runs the verification gate (`devcheck`, `rebuild`, `test`), pushes commits and tags, and publishes to npm, the MCP Registry, GHCR, and attaches the `.mcpb` bundle to the GitHub Release, halting on the first failure. For reference, the underlying commands are:
 
 ```bash
 bun publish --access public

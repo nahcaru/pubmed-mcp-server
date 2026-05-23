@@ -1,0 +1,55 @@
+{
+  "manifest_version": "0.3",
+  "name": "pubmed-mcp-server",
+  "version": "2.7.2",
+  "description": "Search PubMed/Europe PMC, fetch articles and full text (PMC/EPMC/Unpaywall), citations, MeSH terms.",
+  "author": { "name": "cyanheads" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyanheads/pubmed-mcp-server"
+  },
+  "homepage": "https://github.com/cyanheads/pubmed-mcp-server#readme",
+  "license": "Apache-2.0",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "MCP_TRANSPORT_TYPE": "stdio",
+        "MCP_AUTH_MODE": "none",
+        "NODE_ENV": "production",
+        "NCBI_API_KEY": "${user_config.ncbi_api_key}",
+        "NCBI_ADMIN_EMAIL": "${user_config.ncbi_admin_email}",
+        "UNPAYWALL_EMAIL": "${user_config.unpaywall_email}"
+      }
+    }
+  },
+  "compatibility": {
+    "runtimes": { "node": ">=24.0.0" }
+  },
+  "tools_generated": true,
+  "prompts_generated": true,
+  "user_config": {
+    "ncbi_api_key": {
+      "type": "string",
+      "title": "NCBI API Key",
+      "description": "Optional NCBI API key for higher rate limits (10 req/s vs 3 req/s). Generate one at https://www.ncbi.nlm.nih.gov/account/settings/.",
+      "required": false,
+      "sensitive": true
+    },
+    "ncbi_admin_email": {
+      "type": "string",
+      "title": "NCBI Admin Email",
+      "description": "Contact email sent with NCBI requests (recommended by NCBI).",
+      "required": false
+    },
+    "unpaywall_email": {
+      "type": "string",
+      "title": "Unpaywall Email",
+      "description": "Contact email for Unpaywall. When set, pubmed_fetch_fulltext falls back to Unpaywall open-access copies for DOIs not in PMC.",
+      "required": false
+    }
+  }
+}

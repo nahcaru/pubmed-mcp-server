@@ -20,6 +20,7 @@ import {
   validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import { logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
+// biome-ignore lint/suspicious/noDeprecatedImports: staying on in-tree XMLValidator — see ncbi/response-handler.ts
 import { XMLParser, XMLValidator } from 'fast-xml-parser';
 
 import { getServerConfig } from '@/config/server-config.js';
