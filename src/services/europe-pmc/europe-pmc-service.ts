@@ -165,9 +165,11 @@ export class EuropePmcService {
     const hits = ensureArray<EuropePmcSearchHit>(parsed.resultList?.result);
     const echoed = parsed.request?.queryString ?? params.query;
 
-    // EPMC echoes back the input cursor mark on the final page, so absence of
-    // an explicit "next" or equality with the request's cursor marks the end.
-    const cursorMark = parsed.request?.cursorMark ?? params.cursorMark ?? '*';
+    // EPMC's `request.cursorMark` echo is URL-encoded (the wire form), while
+    // `nextCursorMark` in the JSON body is raw. Use the caller's input as the
+    // current cursor so the echo is consistent and the equality check below
+    // (used to detect "no more pages") compares like-for-like.
+    const cursorMark = params.cursorMark ?? '*';
     const nextCursor =
       parsed.nextCursorMark && parsed.nextCursorMark !== cursorMark
         ? parsed.nextCursorMark
