@@ -52,6 +52,24 @@ describe('getServerConfig', () => {
     expect(config.unpaywallTimeoutMs).toBe(15000);
   });
 
+  it('strips unsubstituted MCPB placeholders as undefined', async () => {
+    // MCPB hosts pass through literal `${user_config.X}` strings when a
+    // `required: false` field is left blank and has no `default`. Those
+    // strings must not crash z.email() — they should normalize to undefined.
+    vi.stubEnv('NCBI_API_KEY', '${user_config.ncbi_api_key}');
+    vi.stubEnv('NCBI_ADMIN_EMAIL', '${user_config.ncbi_admin_email}');
+    vi.stubEnv('UNPAYWALL_EMAIL', '${user_config.unpaywall_email}');
+    vi.stubEnv('EUROPEPMC_EMAIL', '${user_config.europepmc_email}');
+
+    const getServerConfig = await loadModule();
+    const config = getServerConfig();
+
+    expect(config.apiKey).toBeUndefined();
+    expect(config.adminEmail).toBeUndefined();
+    expect(config.unpaywallEmail).toBeUndefined();
+    expect(config.europepmcEmail).toBeUndefined();
+  });
+
   it('picks up env vars when set', async () => {
     vi.stubEnv('NCBI_API_KEY', 'test-key-123');
     vi.stubEnv('NCBI_TOOL_IDENTIFIER', 'my-tool');

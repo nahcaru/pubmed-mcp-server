@@ -9,11 +9,21 @@ import { z } from '@cyanheads/mcp-ts-core';
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
 /**
- * Treats an unset env var (`undefined`) and a set-but-empty env var (`""`)
- * identically. Without this, `NCBI_ADMIN_EMAIL=` would fail `z.email()`
- * validation instead of being interpreted as "no admin email configured".
+ * Treats an unset env var (`undefined`), a set-but-empty env var (`""`), and
+ * an unsubstituted MCPB placeholder (`${user_config.X}`) identically. Without
+ * this, `NCBI_ADMIN_EMAIL=` would fail `z.email()` validation instead of being
+ * interpreted as "no admin email configured". The placeholder case occurs when
+ * a Claude Desktop / MCPB host installs the bundle and the user leaves an
+ * optional `user_config` field blank — the literal `${user_config.X}` string
+ * is passed through to the process instead of being substituted, which would
+ * otherwise crash `z.email()` on the next config load.
  */
-const emptyAsUndefined = (v: unknown) => (v === '' ? undefined : v);
+const PLACEHOLDER_PATTERN = /^\$\{[^}]+\}$/;
+const emptyAsUndefined = (v: unknown) => {
+  if (v === '') return;
+  if (typeof v === 'string' && PLACEHOLDER_PATTERN.test(v)) return;
+  return v;
+};
 
 /**
  * Parse a string env var as a boolean. `z.coerce.boolean()` is unusable for
