@@ -43,7 +43,7 @@ function extractValue(field: string | number | { '#text'?: string | number } | u
 
 export const findRelatedTool = tool('pubmed_find_related', {
   description:
-    'Find articles related to a source article — similar content, citing articles, or references.',
+    'Find articles related to a source article — similar content (similar), articles citing this one (cited_by), or articles this one cites (references).',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL]),
   sourceUrl:

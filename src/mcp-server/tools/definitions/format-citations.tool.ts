@@ -21,7 +21,7 @@ const CitationStyleEnum = z.enum(['apa', 'mla', 'bibtex', 'ris']);
 
 export const formatCitationsTool = tool('pubmed_format_citations', {
   description:
-    'Get formatted citations for PubMed articles in one or more styles (APA, MLA, BibTeX, RIS). Pass a single style as a string or multiple as an array.',
+    'Get formatted citations for PubMed articles in one or more styles (apa, mla, bibtex, ris). Pass a single style as a string or multiple as an array.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_CREATIVE_WORK, EDAM_DATA_FORMATTING]),
   sourceUrl:
