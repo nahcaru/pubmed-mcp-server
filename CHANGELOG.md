@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.6](changelog/2.7.x/2.7.6.md) — 2026-05-27
+
+MCPB install fix — handle unsubstituted `${user_config.X}` env values when optional fields are left blank.
+
 ## [2.7.5](changelog/2.7.x/2.7.5.md) — 2026-05-27
 
 Framework `^0.9.6 → ^0.9.10`. Plugin metadata scaffolds. Field-test fixes: tool description ↔ enum alignment, PMC ID schema validation, EuropePMC cursor round-trip.

@@ -1,7 +1,7 @@
 # Agent Protocol
 
 **Server:** @cyanheads/pubmed-mcp-server
-**Version:** 2.7.5
+**Version:** 2.7.6
 **Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.10`
 **Engines:** Bun ≥1.3.2, Node ≥24.0.0
 
