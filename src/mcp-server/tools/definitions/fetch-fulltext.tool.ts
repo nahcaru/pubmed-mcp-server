@@ -311,7 +311,14 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
   input: z
     .object({
       pmcids: z
-        .array(z.string())
+        .array(
+          z
+            .string()
+            .regex(
+              /^(?:PMC)?\d+$/i,
+              'PMC ID must be digits, optionally prefixed with "PMC" (e.g. "PMC9575052" or "9575052")',
+            ),
+        )
         .min(1)
         .max(10)
         .optional()
@@ -728,7 +735,10 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       for (const u of result.unavailable) {
         lines.push(`- [${u.idType}] ${u.id} — ${u.reason}`);
         const chain = u.triedTiers
-          .map((t) => `${t.tier}:${t.outcome}${t.detail ? ` (${t.detail})` : ''}`)
+          .map((t) => {
+            const detail = t.detail ? sanitizeChainDetail(t.detail) : undefined;
+            return `${t.tier}:${t.outcome}${detail ? ` (${detail})` : ''}`;
+          })
           .join(' → ');
         if (chain) lines.push(`  chain: ${chain}`);
       }
@@ -1344,4 +1354,15 @@ function formatPmcAuthor(au: FormattedPmcAuthor): string {
 
 function formatHeading(label: string | undefined, title: string): string {
   return label ? `${label} ${title}` : title;
+}
+
+/**
+ * Strip absolute URLs from chain detail strings. Upstream errors (e.g.
+ * `Fetch failed for <eutils URL>. Status: 400`) leak endpoint paths and query
+ * strings without adding actionable signal — the status code is the useful
+ * part. The raw detail is preserved in `structuredContent` for clients that
+ * want it.
+ */
+function sanitizeChainDetail(detail: string): string {
+  return detail.replace(/https?:\/\/\S+/g, '<upstream>');
 }
