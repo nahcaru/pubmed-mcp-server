@@ -1,9 +1,14 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-23 04:31:55
+Generated on: 2026-05-28 06:09:44
 
 ```text
 pubmed-mcp-server/
+├── .claude-plugin/
+│   └── plugin.json
+├── .codex-plugin/
+│   ├── mcp.json
+│   └── plugin.json
 ├── .github/
 │   ├── ISSUE_TEMPLATE/
 │   │   ├── bug_report.yml
@@ -48,7 +53,6 @@ pubmed-mcp-server/
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
-│   ├── split-changelog.ts
 │   └── tree.ts
 ├── skills/
 │   ├── add-app-tool/
@@ -96,6 +100,8 @@ pubmed-mcp-server/
 │   ├── design-mcp-server/
 │   │   └── SKILL.md
 │   ├── field-test/
+│   │   └── SKILL.md
+│   ├── git-wrapup/
 │   │   └── SKILL.md
 │   ├── maintenance/
 │   │   └── SKILL.md
