@@ -23,6 +23,7 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import {
   adversarialObjectArbitrary,
   type FuzzReport,
+  loadFc,
   zodToArbitrary,
 } from '@cyanheads/mcp-ts-core/testing/fuzz';
 import type { AnyToolDefinition } from '@cyanheads/mcp-ts-core/tools';
@@ -146,6 +147,7 @@ export async function fuzzToolStrict(
     prototypePollution: false,
   };
 
+  await loadFc();
   const validArb = zodToArbitrary(def.input);
   const fcParams: { numRuns: number; seed?: number } = { numRuns };
   if (seed !== undefined) fcParams.seed = seed;
