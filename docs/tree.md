@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-28 06:09:44
+Generated on: 2026-05-29 05:35:58
 
 ```text
 pubmed-mcp-server/
@@ -97,6 +97,8 @@ pubmed-mcp-server/
 │   │   └── SKILL.md
 │   ├── api-workers/
 │   │   └── SKILL.md
+│   ├── code-simplifier/
+│   │   └── SKILL.md
 │   ├── design-mcp-server/
 │   │   └── SKILL.md
 │   ├── field-test/
@@ -104,8 +106,6 @@ pubmed-mcp-server/
 │   ├── git-wrapup/
 │   │   └── SKILL.md
 │   ├── maintenance/
-│   │   └── SKILL.md
-│   ├── migrate-mcp-ts-template/
 │   │   └── SKILL.md
 │   ├── polish-docs-meta/
 │   │   ├── references/

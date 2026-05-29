@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.7](changelog/2.7.x/2.7.7.md) — 2026-05-28
+
+mcp-ts-core ^0.9.10 → ^0.9.13: 413 request-body cap, auth-gated landing page default, GET /mcp keywords; landing.requireAuth: false explicit opt-out for hosted instance
+
 ## [2.7.6](changelog/2.7.x/2.7.6.md) — 2026-05-27
 
 MCPB install fix — handle unsubstituted `${user_config.X}` env values when optional fields are left blank.
