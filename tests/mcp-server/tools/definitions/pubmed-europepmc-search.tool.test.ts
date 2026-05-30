@@ -3,7 +3,7 @@
  * @module tests/mcp-server/tools/definitions/pubmed-europepmc-search.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSearch = vi.fn();
@@ -132,11 +132,11 @@ describe('pubmedEuropepmcSearchTool', () => {
     expect(result1.hits[0]?.abstractSnippet?.endsWith('…')).toBe(true);
 
     mockSearch.mockResolvedValueOnce({ hits: [], hitCount: 0, cursorMark: '*', query: 'foo' });
-    const result2 = await pubmedEuropepmcSearchTool.handler(
+    await pubmedEuropepmcSearchTool.handler(
       pubmedEuropepmcSearchTool.input.parse({ query: 'no matches' }),
       ctx,
     );
-    expect(result2.notice).toMatch(/No results/);
+    expect(getEnrichment(ctx).notice).toMatch(/No results/);
   });
 
   it('emits an epmcUrl per hit', async () => {
@@ -157,7 +157,6 @@ describe('pubmedEuropepmcSearchTool', () => {
   describe('format()', () => {
     it('renders hits with all key fields', () => {
       const blocks = pubmedEuropepmcSearchTool.format!({
-        query: 'cancer AND (SRC:"MED")',
         hits: [
           {
             source: 'MED',
@@ -177,16 +176,12 @@ describe('pubmedEuropepmcSearchTool', () => {
             epmcUrl: 'https://europepmc.org/article/MED/42',
           },
         ],
-        hitCount: 1,
         cursorMark: '*',
         nextCursorMark: 'NEXT',
-        appliedSources: ['MED', 'PMC', 'PPR'],
         searchUrl: 'https://europepmc.org/search?query=cancer',
       });
       const text = blocks[0]?.text ?? '';
       expect(text).toContain('Europe PMC Search Results');
-      expect(text).toContain('Total Hits:** 1');
-      expect(text).toContain('Sources:** MED, PMC, PPR');
       expect(text).toContain('next page');
       expect(text).toContain('Title');
       expect(text).toContain('Smith J, Jones K');
@@ -200,17 +195,12 @@ describe('pubmedEuropepmcSearchTool', () => {
 
     it('marks the final page when no nextCursorMark', () => {
       const blocks = pubmedEuropepmcSearchTool.format!({
-        query: 'x',
         hits: [],
-        hitCount: 0,
         cursorMark: 'CURSOR_X',
-        appliedSources: ['MED'],
         searchUrl: 'https://europepmc.org/search?query=x',
-        notice: 'No results matched your Europe PMC query.',
       });
       const text = blocks[0]?.text ?? '';
       expect(text).toContain('final page');
-      expect(text).toContain('No results matched');
     });
   });
 });

@@ -92,7 +92,6 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
   }),
 
   output: z.object({
-    query: z.string().describe('Effective query string echoed by Europe PMC'),
     hits: z
       .array(
         z
@@ -136,21 +135,38 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
           .describe('Single Europe PMC record returned by the search'),
       )
       .describe('Matching Europe PMC records, in the order EPMC returned them'),
-    hitCount: z.number().describe('Total matching records across all pages'),
     cursorMark: z.string().describe('Cursor used for this response (echoed from the request)'),
     nextCursorMark: z
       .string()
       .optional()
       .describe('Cursor to pass back as `cursorMark` for the next page. Absent on the final page.'),
+    searchUrl: z.string().describe("Europe PMC's website search URL for this query"),
+  }),
+
+  // Result-set context the agent reasons with — the query as EPMC echoed it, the total
+  // match count, the sources actually queried, and recovery guidance for empty pages.
+  // Surfaced via ctx.enrich(...) to structuredContent and content[]; out of the return.
+  enrichment: {
+    query: z.string().describe('Effective query string echoed by Europe PMC'),
+    hitCount: z.number().describe('Total matching records across all pages'),
     appliedSources: z
       .array(SourceEnum)
       .describe('Sources the query was filtered against (defaults applied)'),
-    searchUrl: z.string().describe("Europe PMC's website search URL for this query"),
     notice: z
       .string()
       .optional()
       .describe('Optional guidance when results are empty or paging overshot'),
-  }),
+  },
+
+  // content[] trailer presentation for the enrichment block. structuredContent always
+  // carries the full structured value; this only shapes the human-facing trailer line.
+  enrichmentTrailer: {
+    query: { label: 'Effective Query' },
+    hitCount: { label: 'Total Hits' },
+    appliedSources: {
+      render: (sources) => `**Sources:** ${sources.join(', ')}`,
+    },
+  },
 
   async handler(input, ctx) {
     ctx.log.info('Executing pubmed_europepmc_search', { query: input.query });
@@ -206,28 +222,28 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
       hasNextPage: !!result.nextCursorMark,
     });
 
-    return {
+    ctx.enrich({
       query: result.query,
-      hits,
       hitCount: result.hitCount,
+      appliedSources: [...sources] as ('MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR')[],
+    });
+    if (notice) ctx.enrich.notice(notice);
+
+    return {
+      hits,
       cursorMark: result.cursorMark ?? '*',
       ...(result.nextCursorMark && { nextCursorMark: result.nextCursorMark }),
-      appliedSources: [...sources] as ('MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR')[],
       searchUrl: `https://europepmc.org/search?query=${encodeURIComponent(input.query)}`,
-      ...(notice && { notice }),
     };
   },
 
   format: (result) => {
     const lines = [
       '## Europe PMC Search Results',
-      `**Query:** ${result.query}`,
-      `**Total Hits:** ${result.hitCount} | **Returned:** ${result.hits.length}`,
-      `**Sources:** ${result.appliedSources.join(', ')}`,
+      `**Returned:** ${result.hits.length}`,
       `**Cursor:** ${result.cursorMark}${result.nextCursorMark ? ` → \`${result.nextCursorMark}\` (next page)` : ' (final page)'}`,
       `**Search URL:** ${result.searchUrl}`,
     ];
-    if (result.notice) lines.push(`\n> ${result.notice}`);
 
     if (result.hits.length > 0) {
       lines.push('\n### Hits');

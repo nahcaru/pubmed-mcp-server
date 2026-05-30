@@ -128,13 +128,18 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
           .describe('Matching MeSH descriptor record'),
       )
       .describe('Matching MeSH records'),
+  }),
+
+  // Recovery guidance when no descriptor matched — agent-facing context, surfaced via
+  // ctx.enrich.notice() to both structuredContent and content[]; absent on success.
+  enrichment: {
     notice: z
       .string()
       .optional()
       .describe(
         'Optional guidance when no descriptors matched — suggests spell-check or free-text search. Absent on successful results.',
       ),
-  }),
+  },
 
   async handler(input, ctx) {
     const { query, maxResults, includeDetails } = input;
@@ -160,11 +165,10 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
     ids.length = Math.min(ids.length, maxResults);
 
     if (ids.length === 0) {
-      return {
-        query,
-        results: [],
-        notice: `No MeSH descriptors matched "${query}". Try \`pubmed_spell_check\` for a suggested correction, broaden the term, or use \`pubmed_search_articles\` for free-text discovery against article metadata.`,
-      };
+      ctx.enrich.notice(
+        `No MeSH descriptors matched "${query}". Try \`pubmed_spell_check\` for a suggested correction, broaden the term, or use \`pubmed_search_articles\` for free-text discovery against article metadata.`,
+      );
+      return { query, results: [] };
     }
 
     const summaryData = await ncbi.eSummary({ db: 'mesh', id: ids.join(',') }, callOpts);
@@ -185,7 +189,6 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
       `# MeSH Lookup: "${result.query}"`,
       `Found **${result.results.length}** result(s).`,
     ];
-    if (result.notice) lines.push(`\n> ${result.notice}`);
     for (const r of result.results) {
       lines.push(`\n## ${r.name}`);
       lines.push(`- **MeSH ID:** ${r.meshId}`);

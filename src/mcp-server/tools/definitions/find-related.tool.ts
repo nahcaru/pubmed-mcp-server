@@ -78,6 +78,12 @@ export const findRelatedTool = tool('pubmed_find_related', {
           .describe('Related article with enriched summary'),
       )
       .describe('Related articles'),
+  }),
+
+  // Result-set context the agent reasons with — the pre-truncation match count and
+  // recovery guidance (invalid source PMID, or references for a non-PMC source).
+  // Surfaced via ctx.enrich(...) to structuredContent and content[]; out of the return.
+  enrichment: {
     totalFound: z.number().describe('Total related articles found before truncation'),
     notice: z
       .string()
@@ -85,7 +91,13 @@ export const findRelatedTool = tool('pubmed_find_related', {
       .describe(
         'Optional guidance when results are empty — e.g. invalid source PMID, or references requested for a non-PMC source. Absent on successful result pages.',
       ),
-  }),
+  },
+
+  // content[] trailer presentation for the enrichment block. totalFound is scalar —
+  // a label restores the human-readable key; notice renders as a blockquote kind-tag.
+  enrichmentTrailer: {
+    totalFound: { label: 'Total Found' },
+  },
 
   async handler(input, ctx) {
     const ncbi = getNcbiService();
@@ -133,6 +145,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
     }
 
     const totalFound = foundPmids.length;
+    ctx.enrich({ totalFound });
     if (foundPmids.length === 0) {
       // ELink returns an empty LinkSet for both invalid source PMIDs and valid
       // PMIDs that simply have no related articles, so a single ESummary on the
@@ -175,12 +188,11 @@ export const findRelatedTool = tool('pubmed_find_related', {
           : `Reference lists require the source article to be indexed in PMC. PMID ${input.pmid} has no PMCID — references unavailable. Use pubmed_fetch_articles to inspect the article record, or try relationship: "similar" / "cited_by".`;
       }
 
+      if (notice) ctx.enrich.notice(notice);
       return {
         sourcePmid: input.pmid,
         relationship: input.relationship,
         articles: [],
-        totalFound: 0,
-        ...(notice && { notice }),
       };
     }
 
@@ -206,17 +218,16 @@ export const findRelatedTool = tool('pubmed_find_related', {
       };
     });
 
-    return { sourcePmid: input.pmid, relationship: input.relationship, articles, totalFound };
+    return { sourcePmid: input.pmid, relationship: input.relationship, articles };
   },
 
   format: (result) => {
     const lines = [
       `# Related Articles for PMID ${result.sourcePmid}`,
-      `**Relationship:** ${result.relationship} | **Found:** ${result.totalFound}`,
+      `**Relationship:** ${result.relationship}`,
     ];
-    if (result.notice) lines.push(`\n> ${result.notice}`);
     if (result.articles.length === 0) {
-      if (!result.notice) lines.push('No related articles found.');
+      lines.push('No related articles found.');
     } else {
       for (const a of result.articles) {
         lines.push(`- **[PMID ${a.pmid}](https://pubmed.ncbi.nlm.nih.gov/${a.pmid}/)**`);

@@ -145,13 +145,6 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
 
   output: z.object({
     query: z.string().describe('Original query'),
-    effectiveQuery: z
-      .string()
-      .describe('Sanitized query sent to PubMed after applying all active filters'),
-    appliedFilters: AppliedFiltersSchema.describe(
-      'Normalized filter values that were applied to the PubMed query',
-    ),
-    totalFound: z.number().describe('Total matching articles'),
     offset: z.number().describe('Result offset used'),
     pmids: z.array(z.string()).describe('PubMed IDs'),
     summaries: z
@@ -172,13 +165,59 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
       )
       .describe('Brief summaries (empty array when summaryCount is 0)'),
     searchUrl: z.string().describe('PubMed search URL'),
+  }),
+
+  // Result-set context the agent reasons with — the query as PubMed parsed it, the
+  // total match count, the normalized filters, and recovery guidance for empty or
+  // overshot pages. Populated via ctx.enrich(...) so it reaches structuredContent and
+  // content[] alike; kept out of the domain return.
+  enrichment: {
+    effectiveQuery: z
+      .string()
+      .describe('Sanitized query sent to PubMed after applying all active filters'),
+    totalFound: z.number().describe('Total matching articles'),
+    appliedFilters: AppliedFiltersSchema.describe(
+      'Normalized filter values that were applied to the PubMed query',
+    ),
     notice: z
       .string()
       .optional()
       .describe(
         'Optional guidance when results are empty or paging overshot — e.g. how to broaden filters or reset offset. Absent on successful result pages.',
       ),
-  }),
+  },
+
+  // content[] trailer presentation for the enrichment block. structuredContent always
+  // carries the full structured value; this only shapes the human-facing trailer line.
+  enrichmentTrailer: {
+    effectiveQuery: { label: 'Effective Query' },
+    totalFound: { label: 'Total Found' },
+    appliedFilters: {
+      render: (filters) => {
+        const lines: string[] = [];
+        if (filters.dateRange) {
+          lines.push(
+            `- **Date range:** ${filters.dateRange.minDate} – ${filters.dateRange.maxDate} (${filters.dateRange.dateType})`,
+          );
+        }
+        if (filters.publicationTypes?.length) {
+          lines.push(`- **Publication types:** ${filters.publicationTypes.join(', ')}`);
+        }
+        if (filters.author) lines.push(`- **Author:** ${filters.author}`);
+        if (filters.journal) lines.push(`- **Journal:** ${filters.journal}`);
+        if (filters.meshTerms?.length) {
+          lines.push(`- **MeSH terms:** ${filters.meshTerms.join(', ')}`);
+        }
+        if (filters.language) lines.push(`- **Language:** ${filters.language}`);
+        if (filters.hasAbstract) lines.push('- **Has abstract:** yes');
+        if (filters.freeFullText) lines.push('- **Free full text:** yes');
+        if (filters.species) lines.push(`- **Species:** ${filters.species}`);
+        return lines.length > 0
+          ? `**Applied Filters:**\n${lines.join('\n')}`
+          : '**Applied Filters:** none';
+      },
+    },
+  },
 
   async handler(input, ctx) {
     ctx.log.info('Executing pubmed_search', { query: input.query });
@@ -318,16 +357,15 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
       hasFilters: Object.keys(appliedFilters).length > 0,
     });
 
+    ctx.enrich({ effectiveQuery, totalFound: esResult.count, appliedFilters });
+    if (notice) ctx.enrich.notice(notice);
+
     return {
       query: input.query,
-      effectiveQuery,
-      appliedFilters,
-      totalFound: esResult.count,
       offset: input.offset,
       pmids,
       summaries,
       searchUrl,
-      ...(notice && { notice }),
     };
   },
 
@@ -335,43 +373,9 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
     const lines = [
       `## PubMed Search Results`,
       `**Query:** ${result.query}`,
-      `**Effective Query:** ${result.effectiveQuery}`,
-      `**Total Found:** ${result.totalFound} | **Returned:** ${result.pmids.length} | **Offset:** ${result.offset}`,
+      `**Returned:** ${result.pmids.length} | **Offset:** ${result.offset}`,
       `**Search URL:** ${result.searchUrl}`,
     ];
-    if (Object.keys(result.appliedFilters).length > 0) {
-      lines.push('\n### Applied Filters');
-      if (result.appliedFilters.dateRange) {
-        lines.push(
-          `- **Date Range (${result.appliedFilters.dateRange.dateType}):** ${result.appliedFilters.dateRange.minDate} to ${result.appliedFilters.dateRange.maxDate}`,
-        );
-      }
-      if (result.appliedFilters.publicationTypes?.length) {
-        lines.push(`- **Publication Types:** ${result.appliedFilters.publicationTypes.join(', ')}`);
-      }
-      if (result.appliedFilters.author) {
-        lines.push(`- **Author:** ${result.appliedFilters.author}`);
-      }
-      if (result.appliedFilters.journal) {
-        lines.push(`- **Journal:** ${result.appliedFilters.journal}`);
-      }
-      if (result.appliedFilters.meshTerms?.length) {
-        lines.push(`- **MeSH Terms:** ${result.appliedFilters.meshTerms.join(', ')}`);
-      }
-      if (result.appliedFilters.language) {
-        lines.push(`- **Language:** ${result.appliedFilters.language}`);
-      }
-      if (result.appliedFilters.hasAbstract) {
-        lines.push(`- **Has Abstract:** Yes`);
-      }
-      if (result.appliedFilters.freeFullText) {
-        lines.push(`- **Free Full Text:** Yes`);
-      }
-      if (result.appliedFilters.species) {
-        lines.push(`- **Species:** ${result.appliedFilters.species}`);
-      }
-    }
-    if (result.notice) lines.push(`\n> ${result.notice}`);
     if (result.pmids.length > 0) lines.push(`\n**PMIDs:** ${result.pmids.join(', ')}`);
     if (result.summaries?.length) {
       if (result.summaries.length < result.pmids.length) {

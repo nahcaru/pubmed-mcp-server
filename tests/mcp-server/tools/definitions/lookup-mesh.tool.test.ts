@@ -3,7 +3,7 @@
  * @module tests/mcp-server/tools/definitions/lookup-mesh.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockESearch = vi.fn();
@@ -33,11 +33,12 @@ describe('lookupMeshTool', () => {
     const ctx = createMockContext();
     const input = lookupMeshTool.input.parse({ query: 'xyznonexistent' });
     const result = await lookupMeshTool.handler(input, ctx);
+    const enrichment = getEnrichment(ctx);
 
     expect(result.results).toEqual([]);
     expect(result.query).toBe('xyznonexistent');
-    expect(result.notice).toMatch(/xyznonexistent/);
-    expect(result.notice).toMatch(/spell_check|search_articles/);
+    expect(enrichment.notice).toMatch(/xyznonexistent/);
+    expect(enrichment.notice).toMatch(/spell_check|search_articles/);
   });
 
   it('returns parsed MeSH records', async () => {
@@ -72,7 +73,7 @@ describe('lookupMeshTool', () => {
     expect(result.results[0]?.meshId).toBe('68009369');
     expect(result.results[0]?.name).toBe('Neoplasms');
     expect(result.results[0]?.scopeNote).toContain('abnormal growth');
-    expect(result.notice).toBeUndefined();
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('deduplicates exact matches, respects maxResults, and parses detailed tree metadata', async () => {
@@ -203,13 +204,11 @@ describe('lookupMeshTool', () => {
     expect(blocks[0]?.text).toContain('C04');
   });
 
-  it('renders the recovery notice in formatted output', () => {
+  it('renders empty results; the recovery notice is enrichment, not format output', () => {
     const blocks = lookupMeshTool.format!({
       query: 'xyznonexistent',
       results: [],
-      notice: 'No MeSH descriptors matched "xyznonexistent". Try `pubmed_spell_check`.',
     });
     expect(blocks[0]?.text).toContain('Found **0** result(s).');
-    expect(blocks[0]?.text).toContain('pubmed_spell_check');
   });
 });

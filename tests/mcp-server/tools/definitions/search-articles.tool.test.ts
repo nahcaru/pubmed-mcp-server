@@ -3,7 +3,7 @@
  * @module tests/mcp-server/tools/definitions/search-articles.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockESearch = vi.fn();
@@ -194,11 +194,12 @@ describe('searchArticlesTool', () => {
     const input = searchArticlesTool.input.parse({ query: 'cancer' });
     const result = await searchArticlesTool.handler(input, ctx);
 
-    expect(result.totalFound).toBe(100);
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.totalFound).toBe(100);
     expect(result.pmids).toEqual(['111', '222', '333']);
     expect(result.query).toBe('cancer');
-    expect(result.effectiveQuery).toBe('cancer');
-    expect(result.appliedFilters).toEqual({});
+    expect(enrichment.effectiveQuery).toBe('cancer');
+    expect(enrichment.appliedFilters).toEqual({});
     expect(result.summaries).toEqual([]);
     expect(result.searchUrl).toContain('cancer');
   });
@@ -290,8 +291,9 @@ describe('searchArticlesTool', () => {
         pubmedUrl: 'https://pubmed.ncbi.nlm.nih.gov/111/',
       },
     ]);
-    expect(result.effectiveQuery).toContain('2020/01/01[mdat]');
-    expect(result.appliedFilters).toEqual({
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.effectiveQuery).toContain('2020/01/01[mdat]');
+    expect(enrichment.appliedFilters).toEqual({
       dateRange: {
         minDate: '2020/01/01',
         maxDate: '2024/12/31',
@@ -382,10 +384,11 @@ describe('searchArticlesTool', () => {
 
       const ctx = createMockContext();
       const input = searchArticlesTool.input.parse({ query: 'xyznothingmatches' });
-      const result = await searchArticlesTool.handler(input, ctx);
+      await searchArticlesTool.handler(input, ctx);
 
-      expect(result.notice).toBeDefined();
-      expect(result.notice).toContain('pubmed_spell_check');
+      const enrichment = getEnrichment(ctx);
+      expect(enrichment.notice).toBeDefined();
+      expect(enrichment.notice).toContain('pubmed_spell_check');
     });
 
     it('suggests removing filters when totalFound is 0 with filters applied', async () => {
@@ -403,10 +406,11 @@ describe('searchArticlesTool', () => {
         author: 'Smith J',
         meshTerms: ['Asthma'],
       });
-      const result = await searchArticlesTool.handler(input, ctx);
+      await searchArticlesTool.handler(input, ctx);
 
-      expect(result.notice).toBeDefined();
-      expect(result.notice).toContain('filters');
+      const enrichment = getEnrichment(ctx);
+      expect(enrichment.notice).toBeDefined();
+      expect(enrichment.notice).toContain('filters');
     });
 
     it('warns when offset exceeds totalFound', async () => {
@@ -420,11 +424,12 @@ describe('searchArticlesTool', () => {
 
       const ctx = createMockContext();
       const input = searchArticlesTool.input.parse({ query: 'cancer', offset: 200 });
-      const result = await searchArticlesTool.handler(input, ctx);
+      await searchArticlesTool.handler(input, ctx);
 
-      expect(result.notice).toBeDefined();
-      expect(result.notice).toContain('Offset 200');
-      expect(result.notice).toContain('totalFound (100)');
+      const enrichment = getEnrichment(ctx);
+      expect(enrichment.notice).toBeDefined();
+      expect(enrichment.notice).toContain('Offset 200');
+      expect(enrichment.notice).toContain('totalFound (100)');
     });
 
     it('omits notice on a successful result page', async () => {
@@ -438,18 +443,15 @@ describe('searchArticlesTool', () => {
 
       const ctx = createMockContext();
       const input = searchArticlesTool.input.parse({ query: 'cancer' });
-      const result = await searchArticlesTool.handler(input, ctx);
+      await searchArticlesTool.handler(input, ctx);
 
-      expect(result.notice).toBeUndefined();
+      expect(getEnrichment(ctx).notice).toBeUndefined();
     });
   });
 
   it('formats output', () => {
     const blocks = searchArticlesTool.format!({
       query: 'cancer',
-      effectiveQuery: 'cancer',
-      appliedFilters: {},
-      totalFound: 100,
       offset: 0,
       pmids: ['111', '222'],
       summaries: [],
@@ -457,16 +459,12 @@ describe('searchArticlesTool', () => {
     });
     expect(blocks[0]?.text).toContain('PubMed Search Results');
     expect(blocks[0]?.text).toContain('cancer');
-    expect(blocks[0]?.text).toContain('100');
   });
 
   describe('count-split note (issue #44)', () => {
     it('explains the asymmetry when summaries.length < pmids.length', () => {
       const blocks = searchArticlesTool.format!({
         query: 'glp-1',
-        effectiveQuery: 'glp-1',
-        appliedFilters: {},
-        totalFound: 4954,
         offset: 0,
         pmids: ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
         summaries: [
@@ -486,9 +484,6 @@ describe('searchArticlesTool', () => {
     it('omits the note when summaries.length === pmids.length', () => {
       const blocks = searchArticlesTool.format!({
         query: 'glp-1',
-        effectiveQuery: 'glp-1',
-        appliedFilters: {},
-        totalFound: 100,
         offset: 0,
         pmids: ['1', '2'],
         summaries: [
@@ -503,9 +498,6 @@ describe('searchArticlesTool', () => {
     it('omits the note when summaries are empty', () => {
       const blocks = searchArticlesTool.format!({
         query: 'glp-1',
-        effectiveQuery: 'glp-1',
-        appliedFilters: {},
-        totalFound: 100,
         offset: 0,
         pmids: ['1', '2'],
         summaries: [],
@@ -518,16 +510,6 @@ describe('searchArticlesTool', () => {
   it('formats summaries with article metadata and links', () => {
     const blocks = searchArticlesTool.format!({
       query: 'asthma',
-      effectiveQuery: 'asthma AND (2020/01/01[mdat] : 2024/12/31[mdat]) AND "Nature"[Journal]',
-      appliedFilters: {
-        dateRange: {
-          minDate: '2020/01/01',
-          maxDate: '2024/12/31',
-          dateType: 'mdat',
-        },
-        journal: 'Nature',
-      },
-      totalFound: 2,
       offset: 0,
       pmids: ['111'],
       summaries: [
@@ -547,10 +529,6 @@ describe('searchArticlesTool', () => {
     });
 
     expect(blocks[0]?.text).toContain('### Summaries');
-    expect(blocks[0]?.text).toContain('**Effective Query:**');
-    expect(blocks[0]?.text).toContain('### Applied Filters');
-    expect(blocks[0]?.text).toContain('**Date Range (mdat):** 2020/01/01 to 2024/12/31');
-    expect(blocks[0]?.text).toContain('**Journal:** Nature');
     expect(blocks[0]?.text).toContain('Asthma Outcomes');
     expect(blocks[0]?.text).toContain('**Authors:** Smith J');
     expect(blocks[0]?.text).toContain('**Source:** Nature');

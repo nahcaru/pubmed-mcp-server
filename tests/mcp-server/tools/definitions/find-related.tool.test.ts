@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockELink = vi.fn();
@@ -61,8 +61,8 @@ describe('findRelatedTool', () => {
     const result = await findRelatedTool.handler(input, ctx);
 
     expect(result.articles).toEqual([]);
-    expect(result.totalFound).toBe(0);
-    expect(result.notice).toBeUndefined();
+    expect(getEnrichment(ctx).totalFound).toBe(0);
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   describe('ELink <ERROR> payload', () => {
@@ -77,10 +77,10 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '99999999999' });
       const result = await findRelatedTool.handler(input, ctx);
 
-      expect(result.totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalFound).toBe(0);
       expect(result.articles).toEqual([]);
-      expect(result.notice).toContain('99999999999');
-      expect(result.notice).toContain('not found in PubMed');
+      expect(getEnrichment(ctx).notice).toContain('99999999999');
+      expect(getEnrichment(ctx).notice).toContain('not found in PubMed');
     });
 
     it('returns empty without notice when ELink ERROR fires for a valid PMID with no related items', async () => {
@@ -94,10 +94,10 @@ describe('findRelatedTool', () => {
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '12345' });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.totalFound).toBe(0);
-      expect(result.notice).toBeUndefined();
+      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
     });
   });
 
@@ -159,7 +159,7 @@ describe('findRelatedTool', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(result.totalFound).toBe(2);
+    expect(getEnrichment(ctx).totalFound).toBe(2);
     expect(result.articles).toEqual([
       {
         pmid: '222',
@@ -235,7 +235,7 @@ describe('findRelatedTool', () => {
 
     const ctx = createMockContext();
     const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'references' });
-    const result = await findRelatedTool.handler(input, ctx);
+    await findRelatedTool.handler(input, ctx);
 
     expect(mockELink).toHaveBeenCalledWith(
       {
@@ -248,7 +248,7 @@ describe('findRelatedTool', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(result.totalFound).toBe(0);
+    expect(getEnrichment(ctx).totalFound).toBe(0);
   });
 
   describe('references notice for non-PMC sources (issue #42)', () => {
@@ -264,13 +264,13 @@ describe('findRelatedTool', () => {
         pmid: '37952131',
         relationship: 'references',
       });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.totalFound).toBe(0);
-      expect(result.notice).toBeDefined();
-      expect(result.notice).toContain('PMC');
-      expect(result.notice).toContain('37952131');
-      expect(result.notice).toContain('pubmed_fetch_articles');
+      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeDefined();
+      expect(getEnrichment(ctx).notice).toContain('PMC');
+      expect(getEnrichment(ctx).notice).toContain('37952131');
+      expect(getEnrichment(ctx).notice).toContain('pubmed_fetch_articles');
     });
 
     it('emits a PMC-no-refs hint when the source has a PMCID but no references', async () => {
@@ -282,10 +282,10 @@ describe('findRelatedTool', () => {
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'references' });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.notice).toBeDefined();
-      expect(result.notice).toContain('PMCID PMC12345');
+      expect(getEnrichment(ctx).notice).toBeDefined();
+      expect(getEnrichment(ctx).notice).toContain('PMCID PMC12345');
     });
 
     it('omits notice for similar / cited_by empty results when source PMID is valid', async () => {
@@ -295,9 +295,9 @@ describe('findRelatedTool', () => {
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'similar' });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.notice).toBeUndefined();
+      expect(getEnrichment(ctx).notice).toBeUndefined();
       expect(mockESummary).toHaveBeenCalledTimes(1);
     });
 
@@ -307,10 +307,10 @@ describe('findRelatedTool', () => {
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'references' });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.totalFound).toBe(0);
-      expect(result.notice).toBeUndefined();
+      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
     });
 
     it('emits invalid-PMID notice when source ESummary returns nothing', async () => {
@@ -323,26 +323,23 @@ describe('findRelatedTool', () => {
         pmid: '99999999999',
         relationship: 'references',
       });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.notice).toContain('99999999999');
-      expect(result.notice).toContain('not found in PubMed');
+      expect(getEnrichment(ctx).notice).toContain('99999999999');
+      expect(getEnrichment(ctx).notice).toContain('not found in PubMed');
       // Invalid-source notice supersedes the references-specific hint.
-      expect(result.notice).not.toContain('PMC');
+      expect(getEnrichment(ctx).notice).not.toContain('PMC');
     });
 
-    it('renders the notice as a blockquote in format()', () => {
+    it('renders the empty state; the recovery notice is enrichment, not format output', () => {
       const blocks = findRelatedTool.format!({
         sourcePmid: '37952131',
         relationship: 'references',
         articles: [],
-        totalFound: 0,
-        notice:
-          'Reference lists require the source article to be indexed in PMC. PMID 37952131 has no PMCID — references unavailable. Use pubmed_fetch_articles to inspect the article record, or try relationship: "similar" / "cited_by".',
       });
       const text = blocks[0]?.text ?? '';
-      expect(text).toContain('> Reference lists require');
-      expect(text).not.toContain('No related articles found.');
+      expect(text).toContain('No related articles found.');
+      expect(text).not.toContain('Reference lists require');
     });
   });
 
@@ -359,7 +356,6 @@ describe('findRelatedTool', () => {
           pubDate: '2024',
         },
       ],
-      totalFound: 1,
     });
     expect(blocks[0]?.text).toContain('Related Articles');
     expect(blocks[0]?.text).toContain('12345');
@@ -373,7 +369,6 @@ describe('findRelatedTool', () => {
       sourcePmid: '12345',
       relationship: 'cited_by',
       articles: [],
-      totalFound: 0,
     });
     expect(blocks[0]?.text).toContain('No related articles');
   });
@@ -388,11 +383,11 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '99999999999', relationship });
       const result = await findRelatedTool.handler(input, ctx);
 
-      expect(result.totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalFound).toBe(0);
       expect(result.articles).toEqual([]);
-      expect(result.notice).toContain('99999999999');
-      expect(result.notice).toContain('not found in PubMed');
-      expect(result.notice).toContain('pubmed_fetch_articles');
+      expect(getEnrichment(ctx).notice).toContain('99999999999');
+      expect(getEnrichment(ctx).notice).toContain('not found in PubMed');
+      expect(getEnrichment(ctx).notice).toContain('pubmed_fetch_articles');
     };
 
     it(
@@ -419,10 +414,10 @@ describe('findRelatedTool', () => {
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '99999999999', relationship: 'similar' });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.notice).toContain('99999999999');
-      expect(result.notice).toContain('not found in PubMed');
+      expect(getEnrichment(ctx).notice).toContain('99999999999');
+      expect(getEnrichment(ctx).notice).toContain('not found in PubMed');
     });
 
     it('does NOT emit invalid notice on transient transport failure', async () => {
@@ -431,10 +426,10 @@ describe('findRelatedTool', () => {
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'similar' });
-      const result = await findRelatedTool.handler(input, ctx);
+      await findRelatedTool.handler(input, ctx);
 
-      expect(result.totalFound).toBe(0);
-      expect(result.notice).toBeUndefined();
+      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).notice).toBeUndefined();
     });
   });
 });
