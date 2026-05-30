@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.8](changelog/2.7.x/2.7.8.md) — 2026-05-29
+
+mcp-ts-core ^0.9.13 → ^0.9.16: result-set context (effective query, totals, applied filters, empty-result notices) moved to ctx.enrich and mirrored to structuredContent and content[] via enrichmentTrailer render/label
+
 ## [2.7.7](changelog/2.7.x/2.7.7.md) — 2026-05-28
 
 mcp-ts-core ^0.9.10 → ^0.9.13: 413 request-body cap, auth-gated landing page default, GET /mcp keywords; landing.requireAuth: false explicit opt-out for hosted instance
