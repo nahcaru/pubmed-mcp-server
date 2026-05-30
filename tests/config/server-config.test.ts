@@ -56,10 +56,11 @@ describe('getServerConfig', () => {
     // MCPB hosts pass through literal `${user_config.X}` strings when a
     // `required: false` field is left blank and has no `default`. Those
     // strings must not crash z.email() — they should normalize to undefined.
-    vi.stubEnv('NCBI_API_KEY', '${user_config.ncbi_api_key}');
-    vi.stubEnv('NCBI_ADMIN_EMAIL', '${user_config.ncbi_admin_email}');
-    vi.stubEnv('UNPAYWALL_EMAIL', '${user_config.unpaywall_email}');
-    vi.stubEnv('EUROPEPMC_EMAIL', '${user_config.europepmc_email}');
+    const mcpbPlaceholder = (field: string) => `\${user_config.${field}}`;
+    vi.stubEnv('NCBI_API_KEY', mcpbPlaceholder('ncbi_api_key'));
+    vi.stubEnv('NCBI_ADMIN_EMAIL', mcpbPlaceholder('ncbi_admin_email'));
+    vi.stubEnv('UNPAYWALL_EMAIL', mcpbPlaceholder('unpaywall_email'));
+    vi.stubEnv('EUROPEPMC_EMAIL', mcpbPlaceholder('europepmc_email'));
 
     const getServerConfig = await loadModule();
     const config = getServerConfig();
