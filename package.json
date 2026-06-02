@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/pubmed-mcp-server",
-  "version": "2.7.8",
+  "version": "2.7.9",
   "mcpName": "io.github.cyanheads/pubmed-mcp-server",
   "description": "Search PubMed/Europe PMC, fetch articles and full text (PMC/EPMC/Unpaywall), citations, MeSH terms via MCP. STDIO or Streamable HTTP.",
   "type": "module",
@@ -26,6 +26,7 @@
     "bundle": "bun run build && npx -y @anthropic-ai/mcpb pack . dist/pubmed-mcp-server.mcpb",
     "changelog:build": "bun run scripts/build-changelog.ts",
     "changelog:check": "bun run scripts/build-changelog.ts --check",
+    "release:github": "bun run scripts/release-github.ts",
     "publish-mcp": "mcp-publisher login github -token \"$(security find-generic-password -a \"$USER\" -s mcp-publisher-github-pat -w)\" && mcp-publisher publish",
     "start:stdio": "MCP_TRANSPORT_TYPE=stdio bun ./dist/index.js",
     "start:http": "MCP_TRANSPORT_TYPE=http bun ./dist/index.js"
@@ -80,7 +81,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@cyanheads/mcp-ts-core": "^0.9.16",
+    "@cyanheads/mcp-ts-core": "^0.9.21",
     "defuddle": "^0.18.1",
     "fast-xml-parser": "^5.8.0",
     "linkedom": "^0.18.12",
@@ -93,12 +94,12 @@
     "@biomejs/biome": "^2.4.16",
     "@types/node": "^25.9.1",
     "@types/sanitize-html": "^2.16.1",
-    "@vitest/coverage-istanbul": "^4.1.7",
+    "@vitest/coverage-istanbul": "^4.1.8",
     "depcheck": "^1.4.7",
     "fast-check": "^4.8.0",
     "ignore": "^7.0.5",
     "tsc-alias": "^1.8.17",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.8"
   }
 }
