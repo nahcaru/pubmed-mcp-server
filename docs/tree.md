@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-05-29 05:35:58
+Generated on: 2026-06-02 14:56:10
 
 ```text
 pubmed-mcp-server/
@@ -47,12 +47,14 @@ pubmed-mcp-server/
 │   ├── build.ts
 │   ├── check-docs-sync.ts
 │   ├── check-framework-antipatterns.ts
+│   ├── check-skill-versions.ts
 │   ├── check-skills-sync.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── release-github.ts
 │   └── tree.ts
 ├── skills/
 │   ├── add-app-tool/
@@ -78,6 +80,8 @@ pubmed-mcp-server/
 │   ├── api-errors/
 │   │   └── SKILL.md
 │   ├── api-linter/
+│   │   └── SKILL.md
+│   ├── api-mirror/
 │   │   └── SKILL.md
 │   ├── api-services/
 │   │   ├── references/
@@ -106,6 +110,13 @@ pubmed-mcp-server/
 │   ├── git-wrapup/
 │   │   └── SKILL.md
 │   ├── maintenance/
+│   │   └── SKILL.md
+│   ├── orchestrations/
+│   │   ├── workflows/
+│   │   │   ├── field-test-fix.md
+│   │   │   ├── fix-wrapup-release.md
+│   │   │   ├── greenfield-build.md
+│   │   │   └── maintenance-release.md
 │   │   └── SKILL.md
 │   ├── polish-docs-meta/
 │   │   ├── references/
@@ -197,6 +208,7 @@ pubmed-mcp-server/
 │   │           ├── lookup-mesh.tool.test.ts
 │   │           ├── pubmed-europepmc-search.tool.test.ts
 │   │           ├── search-articles.tool.test.ts
+│   │           ├── security.test.ts
 │   │           ├── spell-check.tool.test.ts
 │   │           └── tools.fuzz.test.ts
 │   ├── services/
@@ -204,11 +216,13 @@ pubmed-mcp-server/
 │   │   │   └── europe-pmc-service.test.ts
 │   │   ├── ncbi/
 │   │   │   ├── formatting/
+│   │   │   │   ├── citation-formatter.edge.test.ts
 │   │   │   │   └── citation-formatter.test.ts
 │   │   │   ├── parsing/
 │   │   │   │   ├── article-parser.test.ts
 │   │   │   │   ├── esummary-parser.test.ts
 │   │   │   │   ├── pmc-article-parser.test.ts
+│   │   │   │   ├── pmc-xml-helpers.test.ts
 │   │   │   │   └── xml-helpers.test.ts
 │   │   │   ├── api-client.test.ts
 │   │   │   ├── ncbi-service.test.ts

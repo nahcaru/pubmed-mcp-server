@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.9](changelog/2.7.x/2.7.9.md) — 2026-06-02
+
+mcp-ts-core ^0.9.16 → ^0.9.21: per-request log context fix, fetchWithTimeout secret-scrubbing, withRetry fail-fast on non-retryable errors; new scripts/release-github.ts, skill sync
+
 ## [2.7.8](changelog/2.7.x/2.7.8.md) — 2026-05-29
 
 mcp-ts-core ^0.9.13 → ^0.9.16: result-set context (effective query, totals, applied filters, empty-result notices) moved to ctx.enrich and mirrored to structuredContent and content[] via enrichmentTrailer render/label
