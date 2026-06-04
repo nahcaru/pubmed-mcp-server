@@ -117,6 +117,31 @@ describe('NcbiApiClient', () => {
     });
   });
 
+  it('reclassifies HTTP 500 as ServiceUnavailable (issue #62)', async () => {
+    // NCBI's eutils proxy returns 500 for transient mesh-layer failures that are
+    // safe to retry. The codeOverride hook must map 500 → ServiceUnavailable so
+    // the retry loop in NcbiService.withRetry picks it up.
+    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockFetch.mockResolvedValueOnce(new Response('WWW Error 500', { status: 500 }));
+    const client = new NcbiApiClient(baseConfig);
+
+    await expect(client.makeRequest('elink', { db: 'pubmed' })).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      message: expect.stringContaining('500'),
+    });
+  });
+
+  it('does not reclassify HTTP 501 (keeps InternalError)', async () => {
+    // 501 Not Implemented is not a transient NCBI failure — leave as InternalError.
+    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockFetch.mockResolvedValueOnce(new Response('', { status: 501 }));
+    const client = new NcbiApiClient(baseConfig);
+
+    await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
+      code: JsonRpcErrorCode.InternalError,
+    });
+  });
+
   it('throws InvalidParams for HTTP 400', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     mockFetch.mockResolvedValueOnce(new Response('', { status: 400 }));

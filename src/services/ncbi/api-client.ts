@@ -5,7 +5,7 @@
  * @module src/services/ncbi/api-client
  */
 
-import { McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import {
   fetchWithTimeout,
   httpErrorFromResponse,
@@ -57,6 +57,11 @@ export class NcbiApiClient {
       if (!response.ok) {
         throw await httpErrorFromResponse(response, {
           service: 'NCBI',
+          // NCBI's eutils proxy returns HTTP 500 for transient mesh-layer failures
+          // that are safe to retry. Reclassify as ServiceUnavailable so the retry
+          // loop in NcbiService.withRetry picks it up — 501 (Not Implemented) is
+          // left as InternalError since those are not transient.
+          codeOverride: (s) => (s === 500 ? JsonRpcErrorCode.ServiceUnavailable : undefined),
           data: { endpoint },
         });
       }
