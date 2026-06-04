@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.10](changelog/2.7.x/2.7.10.md) — 2026-06-04
+
+Three ECitMatch fixes: HTTP 500 reclassified as retryable, dropped citations synthesized as not_found, citation validation requires journal or year
+
 ## [2.7.9](changelog/2.7.x/2.7.9.md) — 2026-06-02
 
 mcp-ts-core ^0.9.16 → ^0.9.21: per-request log context fix, fetchWithTimeout secret-scrubbing, withRetry fail-fast on non-retryable errors; new scripts/release-github.ts, skill sync
