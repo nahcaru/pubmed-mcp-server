@@ -46,10 +46,31 @@ describe('lookupCitationTool', () => {
     expect(() => lookupCitationTool.input.parse({ citations })).toThrow();
   });
 
-  it('accepts citation with only one field', () => {
+  it('accepts citation with journal only', () => {
     expect(() =>
       lookupCitationTool.input.parse({ citations: [{ journal: 'Nature' }] }),
     ).not.toThrow();
+  });
+
+  it('accepts citation with year only', () => {
+    expect(() => lookupCitationTool.input.parse({ citations: [{ year: '2020' }] })).not.toThrow();
+  });
+
+  it('rejects citation with only authorName (no journal or year) (issue #39)', () => {
+    const parsed = lookupCitationTool.input.safeParse({
+      citations: [{ authorName: 'smith j' }],
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toMatch(/journal or year/);
+    expect(parsed.error?.issues[0]?.path).toEqual(['citations', 0]);
+  });
+
+  it('rejects citation with only volume (no journal or year) (issue #39)', () => {
+    const parsed = lookupCitationTool.input.safeParse({
+      citations: [{ volume: '42' }],
+    });
+    expect(parsed.success).toBe(false);
+    expect(parsed.error?.issues[0]?.message).toMatch(/journal or year/);
   });
 
   it('maps matched results with pmid and surfaces first author on clean match', async () => {
@@ -356,7 +377,7 @@ describe('lookupCitationTool', () => {
     const parsed = lookupCitationTool.input.safeParse({ citations: [{ key: 'empty' }] });
 
     expect(parsed.success).toBe(false);
-    expect(parsed.error?.issues[0]?.message).toMatch(/at least one bibliographic field/);
+    expect(parsed.error?.issues[0]?.message).toMatch(/journal or year/);
     expect(parsed.error?.issues[0]?.path).toEqual(['citations', 0]);
     expect(mockECitMatch).not.toHaveBeenCalled();
   });
@@ -380,6 +401,40 @@ describe('lookupCitationTool', () => {
 
     expect(result.totalMatched).toBe(2);
     expect(result.totalSubmitted).toBe(3);
+  });
+
+  it('maps all service results including synthesized not_found rows (issue #54)', async () => {
+    // The service layer (eCitMatch) guarantees one row per submitted citation,
+    // synthesizing not_found for any upstream-dropped rows. The handler must
+    // pass all rows through correctly, including the synthesized ones.
+    mockECitMatch.mockResolvedValue([
+      { key: 'minimal', matched: false, pmid: null, status: 'not_found', detail: 'NOT_FOUND' },
+      { key: 'ambiguous', matched: false, pmid: null, status: 'not_found' },
+      { key: 'no-match', matched: false, pmid: null, status: 'not_found' },
+    ]);
+
+    const ctx = createMockContext();
+    const input = lookupCitationTool.input.parse({
+      citations: [
+        { key: 'minimal', journal: 'Nature', year: '2099', volume: '999', firstPage: '1' },
+        { key: 'ambiguous', journal: 'Science', year: '2020' },
+        { key: 'no-match', journal: 'Lancet', year: '2021' },
+      ],
+    });
+    const result = await lookupCitationTool.handler(input, ctx);
+
+    expect(result.results).toHaveLength(3);
+    expect(result.totalSubmitted).toBe(3);
+    expect(result.results[0]?.key).toBe('minimal');
+    expect(result.results[0]?.status).toBe('not_found');
+    expect(result.results[1]?.key).toBe('ambiguous');
+    expect(result.results[1]?.matched).toBe(false);
+    expect(result.results[1]?.status).toBe('not_found');
+    expect(result.results[2]?.key).toBe('no-match');
+    expect(result.results[2]?.matched).toBe(false);
+    expect(result.results[2]?.status).toBe('not_found');
+    expect(result.totalMatched).toBe(0);
+    expect(mockESummary).not.toHaveBeenCalled();
   });
 
   it('passes provided fields through to service', async () => {

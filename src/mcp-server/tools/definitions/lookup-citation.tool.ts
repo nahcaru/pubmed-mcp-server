@@ -32,7 +32,7 @@ function authorSurnames(authors: string): string[] {
 }
 
 export const lookupCitationTool = tool('pubmed_lookup_citation', {
-  description: `Look up PubMed IDs from partial bibliographic citations. Useful when you have a reference (journal, year, volume, page, author) and need the PMID — deterministic citation matching, more reliable than free-text search for structured references. Each citation must include at least one bibliographic field (journal, year, volume, firstPage, or authorName); more fields = better match accuracy.`,
+  description: `Look up PubMed IDs from partial bibliographic citations. Useful when you have a reference (journal, year, volume, page, author) and need the PMID — deterministic citation matching, more reliable than free-text search for structured references. Each citation must include at least journal or year (ECitMatch primary-keys on journal+volume+page; author-only or volume-only inputs guarantee no match); more fields = better match accuracy.`,
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL, EDAM_PUBMED_ID]),
   sourceUrl:
@@ -64,11 +64,11 @@ export const lookupCitationTool = tool('pubmed_lookup_citation', {
               ),
           })
           .describe(
-            'Citation to match against PubMed. Must include at least one bibliographic field (journal, year, volume, firstPage, or authorName).',
+            'Citation to match against PubMed. Must include at least journal or year — ECitMatch primary-keys on journal+volume+page, so author-only or volume-only inputs guarantee no match.',
           )
-          .refine((c) => !!(c.journal || c.year || c.volume || c.firstPage || c.authorName), {
+          .refine((c) => !!(c.journal || c.year), {
             message:
-              'Each citation must include at least one bibliographic field (journal, year, volume, firstPage, or authorName).',
+              'Each citation must include at least a journal or year field — ECitMatch primary-keys on journal+volume+page, so author-only or volume-only inputs guarantee no match.',
           }),
       )
       .min(1)
