@@ -194,7 +194,7 @@ export class NcbiService {
       { retmode: 'text', ...(options?.signal && { signal: options.signal }) },
     );
 
-    return text
+    const parsed: ECitMatchResult[] = text
       .split(/[\r\n]+/)
       .filter((line) => line.trim().length > 0)
       .map((line) => {
@@ -232,6 +232,20 @@ export class NcbiService {
           ...(rawOutcome && { detail: rawOutcome }),
         };
       });
+
+    // ECitMatch omits lines for citations it cannot classify. Reconcile against
+    // the submitted citations so every input gets a result row — callers can rely
+    // on results.length === citations.length and correlate by key.
+    const parsedByKey = new Map(parsed.map((r) => [r.key, r]));
+    return citations.map(
+      (c): ECitMatchResult =>
+        parsedByKey.get(c.key) ?? {
+          key: c.key,
+          matched: false,
+          pmid: null,
+          status: 'not_found' as const,
+        },
+    );
   }
 
   /**

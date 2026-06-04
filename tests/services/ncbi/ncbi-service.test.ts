@@ -327,6 +327,51 @@ describe('NcbiService.eCitMatch', () => {
     const bdata = (mockApiClient.makeRequest as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]?.bdata;
     expect(bdata).toBe('||||smith|ref1|');
   });
+
+  it('reconciles dropped upstream rows as not_found (issue #54)', async () => {
+    // Upstream returns only 1 of 3 submitted citations — the others were dropped
+    // (NCBI omits lines for citations it cannot classify).
+    const { service, mockApiClient, mockResponseHandler } = createMockService();
+    (mockApiClient.makeRequest as ReturnType<typeof vi.fn>).mockResolvedValue('<xml/>');
+    (mockResponseHandler.parseAndHandleResponse as ReturnType<typeof vi.fn>).mockReturnValue(
+      'nature|2020|||smith|ref1|12345\r\n',
+    );
+
+    const results = await service.eCitMatch([
+      { journal: 'nature', year: '2020', authorName: 'smith', key: 'ref1' },
+      { journal: 'science', year: '2021', key: 'ref2' },
+      { journal: 'lancet', key: 'ref3' },
+    ]);
+
+    expect(results).toHaveLength(3);
+    expect(results[0]).toEqual({ key: 'ref1', matched: true, pmid: '12345', status: 'matched' });
+    expect(results[1]).toEqual({ key: 'ref2', matched: false, pmid: null, status: 'not_found' });
+    expect(results[2]).toEqual({ key: 'ref3', matched: false, pmid: null, status: 'not_found' });
+  });
+
+  it('preserves upstream row order and fills gaps (issue #54)', async () => {
+    // Upstream returns the second citation but not the first or third.
+    const { service, mockApiClient, mockResponseHandler } = createMockService();
+    (mockApiClient.makeRequest as ReturnType<typeof vi.fn>).mockResolvedValue('<xml/>');
+    (mockResponseHandler.parseAndHandleResponse as ReturnType<typeof vi.fn>).mockReturnValue(
+      '|2020||||ref2|NOT_FOUND\r\n',
+    );
+
+    const results = await service.eCitMatch([
+      { journal: 'nature', key: 'ref1' },
+      { year: '2020', key: 'ref2' },
+      { journal: 'lancet', year: '2019', key: 'ref3' },
+    ]);
+
+    // Results must follow submission order, not upstream response order.
+    expect(results).toHaveLength(3);
+    expect(results[0]?.key).toBe('ref1');
+    expect(results[0]?.status).toBe('not_found');
+    expect(results[1]?.key).toBe('ref2');
+    expect(results[1]?.status).toBe('not_found');
+    expect(results[2]?.key).toBe('ref3');
+    expect(results[2]?.status).toBe('not_found');
+  });
 });
 
 describe('NcbiService.idConvert', () => {
