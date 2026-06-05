@@ -6,9 +6,9 @@
  *   - `pmcids` — fetch directly by PMC ID. Articles not in PMC fall through to
  *     EPMC by PMC ID, then to Unpaywall when the DOI is available.
  *   - `pmids` — resolve PMID → PMCID via PMC ID Converter, then run the chain.
- *   - `dois` — skip PMC EFetch (no PMCID); resolve via EPMC search-by-DOI →
- *     fullTextXML, then Unpaywall. Covers EPMC-only OA and preprints with no
- *     PubMed presence.
+ *   - `dois` — resolve DOI → PMCID via the PMC ID Converter (mirroring `pmids`),
+ *     then run the chain. DOIs with no PMC counterpart fall through to EPMC
+ *     search-by-DOI → fullTextXML, then Unpaywall (EPMC-only OA, preprints).
  *
  * Output uses a discriminated union on `source` (`pmc` | `unpaywall`) with an
  * extra `viaSource` discriminator that records which layer produced the
@@ -20,6 +20,7 @@
 
 import { type Context, tool, z } from '@cyanheads/mcp-ts-core';
 import { htmlExtractor, pdfParser } from '@cyanheads/mcp-ts-core/utils';
+import { getServerConfig } from '@/config/server-config.js';
 import {
   EUROPEPMC_SERVICE_ERRORS,
   NCBI_SERVICE_ERRORS,
@@ -294,9 +295,56 @@ const UnavailableSchema = z
 
 // ─── Tool Definition ─────────────────────────────────────────────────────────
 
+/**
+ * Compose the tool description for the fallback tiers enabled in this
+ * deployment. PMC EFetch is always present; Europe PMC (`EUROPEPMC_ENABLED`)
+ * and Unpaywall (`UNPAYWALL_EMAIL`) are optional, so the advertised chain must
+ * match what the server can actually deliver — otherwise the model requests
+ * recoveries that silently can't happen.
+ */
+export function buildFulltextDescription(tiers: {
+  europePmc: boolean;
+  unpaywall: boolean;
+}): string {
+  const base =
+    'Fetch full-text articles from PubMed Central with structured sections and references.';
+  const epmcClause =
+    'Europe PMC `fullTextXML` (structured JATS for records with a PMC counterpart)';
+  const unpaywallClause =
+    'Unpaywall — publisher-hosted or institutional open-access copies as HTML-as-Markdown or PDF-as-text';
+
+  let fallback: string;
+  if (tiers.europePmc && tiers.unpaywall) {
+    fallback = `When PMC misses, transparently falls back to ${epmcClause}, then to ${unpaywallClause}.`;
+  } else if (tiers.europePmc) {
+    fallback = `When PMC misses, transparently falls back to ${epmcClause}.`;
+  } else if (tiers.unpaywall) {
+    fallback = `When PMC misses, falls back to ${unpaywallClause}.`;
+  } else {
+    fallback =
+      'Full text is sourced from PubMed Central only; articles not in PMC return no full text in this configuration.';
+  }
+
+  const doiTail =
+    tiers.europePmc && tiers.unpaywall
+      ? '; preprints and EPMC-only OA fall through to the Europe PMC and Unpaywall layers'
+      : tiers.europePmc
+        ? '; preprints with a PMC counterpart recover via Europe PMC'
+        : tiers.unpaywall
+          ? '; DOIs with no PMC copy recover via Unpaywall open access'
+          : '';
+  const input = `Provide exactly one of \`pmcids\` (PMC IDs directly), \`pmids\` (PubMed IDs, auto-resolved), or \`dois\` (DOIs, auto-resolved to PMC via the ID Converter${doiTail}).`;
+
+  return `${base} ${fallback} ${input}`;
+}
+
+const serverConfig = getServerConfig();
+
 export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
-  description:
-    'Fetch full-text articles from PubMed Central with structured sections and references. When PMC misses, transparently falls back to Europe PMC `fullTextXML` (structured JATS for records with a PMC counterpart), then to Unpaywall — publisher-hosted or institutional open-access copies as HTML-as-Markdown or PDF-as-text. Provide exactly one of `pmcids` (PMC IDs directly), `pmids` (PubMed IDs, auto-resolved), or `dois` (preprints and EPMC-only OA records that lack PMID/PMCID).',
+  description: buildFulltextDescription({
+    europePmc: serverConfig.europepmcEnabled,
+    unpaywall: Boolean(serverConfig.unpaywallEmail),
+  }),
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL]),
   sourceUrl:
@@ -339,7 +387,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
         .max(10)
         .optional()
         .describe(
-          'DOIs to resolve (e.g. ["10.21203/rs.3.rs-9010375/v1"]). Provide exactly one of `pmcids`, `pmids`, or `dois`. Covers preprints and EPMC-only OA records that lack PMID/PMCID. Chain: Europe PMC search-by-DOI → fullTextXML → Unpaywall.',
+          'DOIs to resolve (e.g. ["10.21203/rs.3.rs-9010375/v1"]). Provide exactly one of `pmcids`, `pmids`, or `dois`. Resolved to a PMCID via the PMC ID Converter and returned as structured JATS when the article is in PMC; DOIs with no PMC counterpart (preprints, EPMC-only OA) fall through to Europe PMC, then Unpaywall, when those layers are enabled.',
         ),
       includeReferences: z
         .boolean()
@@ -389,9 +437,10 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
     // for, so we can skip them when building `unavailable[]`.
     const chainByInput = new Map<string, z.infer<typeof TriedTierSchema>[]>();
     const recoveredIds = new Set<string>();
-    // PMCIDs the converter resolved from a pmid → PMID, for back-mapping after
-    // the PMC and EPMC stages.
-    const pmcidToPmid = new Map<string, string>();
+    // Back-map from a converter-resolved prefixed PMCID to the input id that
+    // seeded it — a PMID for `pmids` input, a DOI for `dois` input — so the PMC
+    // and EPMC stages attribute recoveries and misses to the original input id.
+    const pmcidToInputId = new Map<string, string>();
     // DOI hints captured during pmids→pmcid routing so PMC-misses on the pmids
     // branch can still reach Unpaywall without re-fetching from PubMed metadata.
     const pmidContext = new Map<string, PmidCandidate>();
@@ -419,7 +468,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
         if (r.pmcid) {
           const normalized = normalizePmcId(String(r.pmcid));
           pmcIds.push(normalized);
-          pmcidToPmid.set(withPmcPrefix(normalized), pmid);
+          pmcidToInputId.set(withPmcPrefix(normalized), pmid);
           pmidContext.set(pmid, { pmid, ...(r.doi && { doi: r.doi }) });
         } else {
           chainByInput.get(pmid)?.push({
@@ -444,26 +493,67 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       for (const id of input.pmcids) chainByInput.set(withPmcPrefix(normalizePmcId(id)), []);
       pmcIds = input.pmcids.map(normalizePmcId);
     } else if (input.dois) {
-      for (const doi of input.dois) {
-        chainByInput.set(doi, [
-          { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI input bypasses PMC EFetch' },
-        ]);
+      // Mirror the `pmids` branch: resolve DOI → PMCID via the PMC ID Converter
+      // so PMC-indexed DOIs reach PMC EFetch instead of going straight to the
+      // EPMC/Unpaywall fallback (which misses articles whose only OA copy is the
+      // PMC JATS). DOIs the converter can't place in PMC seed `doiCandidates`.
+      const requestedDois = new Set(input.dois);
+      for (const doi of input.dois) chainByInput.set(doi, []);
+      const records = await getNcbiService().idConvert(
+        input.dois,
+        'doi',
+        ctx.signal ? { signal: ctx.signal } : undefined,
+      );
+      const seen = new Set<string>();
+      for (const r of records) {
+        // The converter echoes the submitted id verbatim in `requested-id`;
+        // match on it, not `r.doi` (DOIs aren't case-stable across the API).
+        const doi = String(r['requested-id']);
+        if (!requestedDois.has(doi)) continue;
+        seen.add(doi);
+        if (r.pmcid) {
+          const normalized = normalizePmcId(String(r.pmcid));
+          pmcIds.push(normalized);
+          pmcidToInputId.set(withPmcPrefix(normalized), doi);
+        } else {
+          chainByInput.get(doi)?.push({
+            tier: 'pmc',
+            outcome: 'not-attempted',
+            detail: 'DOI has no PMC counterpart',
+          });
+          doiCandidates.push({ doi });
+        }
       }
-      doiCandidates = input.dois.map((doi) => ({ doi }));
+      for (const requested of input.dois) {
+        if (!seen.has(requested)) {
+          chainByInput.get(requested)?.push({
+            tier: 'pmc',
+            outcome: 'not-attempted',
+            detail: 'ID Converter returned no record for this DOI',
+          });
+          doiCandidates.push({ doi: requested });
+        }
+      }
     }
 
     // Route PMC-missed prefixed PMCIDs into the fallback buckets so EPMC and
-    // (for pmids) Unpaywall still get a chance. For pmids input we look up the
-    // captured DOI hint via `pmidContext` to avoid an extra PubMed eFetch when
-    // available; the converter often returns the DOI alongside a PMCID match.
+    // (for pmids/dois) Unpaywall still get a chance. For pmids input we look up
+    // the captured DOI hint via `pmidContext` to avoid an extra PubMed eFetch
+    // when available; the converter often returns the DOI alongside a PMCID
+    // match. For dois input the original DOI is the fallback key directly.
     const routePmcMissesToFallback = (missingPrefixed: string[]) => {
       if (missingPrefixed.length === 0) return;
       if (input.pmcids) {
         pmcidFallbackCandidates = missingPrefixed.map((pmcid) => ({ pmcid }));
       } else if (input.pmids) {
         for (const prefixed of missingPrefixed) {
-          const pmid = pmcidToPmid.get(prefixed);
+          const pmid = pmcidToInputId.get(prefixed);
           if (pmid) pmidFallbackCandidates.push(pmidContext.get(pmid) ?? { pmid });
+        }
+      } else if (input.dois) {
+        for (const prefixed of missingPrefixed) {
+          const doi = pmcidToInputId.get(prefixed);
+          if (doi) doiCandidates.push({ doi });
         }
       }
     };
@@ -504,13 +594,13 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
           pmcArticles.map((a) => a.pmcId).filter((id): id is string => !!id),
         );
         for (const prefixed of returnedPmcIds) {
-          recoveredIds.add(pmcidToPmid.get(prefixed) ?? prefixed);
+          recoveredIds.add(pmcidToInputId.get(prefixed) ?? prefixed);
         }
         const missing = pmcIds
           .map((id) => withPmcPrefix(id))
           .filter((id) => !returnedPmcIds.has(id));
         for (const prefixed of missing) {
-          const inputId = pmcidToPmid.get(prefixed) ?? prefixed;
+          const inputId = pmcidToInputId.get(prefixed) ?? prefixed;
           chainByInput.get(inputId)?.push({ tier: 'pmc', outcome: 'miss' });
         }
         routePmcMissesToFallback(missing);
@@ -522,7 +612,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
         });
         const allPrefixed = pmcIds.map(withPmcPrefix);
         for (const prefixed of allPrefixed) {
-          const inputId = pmcidToPmid.get(prefixed) ?? prefixed;
+          const inputId = pmcidToInputId.get(prefixed) ?? prefixed;
           chainByInput.get(inputId)?.push({ tier: 'pmc', outcome: 'service-error', detail });
         }
         routePmcMissesToFallback(allPrefixed);
@@ -562,7 +652,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       for (const c of pmidFallbackCandidates) chainByInput.get(c.pmid)?.push(epmcDisabledEntry);
       for (const c of pmcidFallbackCandidates) {
         const prefixed = withPmcPrefix(c.pmcid);
-        chainByInput.get(pmcidToPmid.get(prefixed) ?? prefixed)?.push(epmcDisabledEntry);
+        chainByInput.get(pmcidToInputId.get(prefixed) ?? prefixed)?.push(epmcDisabledEntry);
       }
       for (const c of doiCandidates) chainByInput.get(c.doi)?.push(epmcDisabledEntry);
     } else {
@@ -574,7 +664,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
         chainByInput.get(pmid)?.push(epmcTierFromOutcome(outcome));
       }
       for (const [prefixed, outcome] of epmcOutcomes.pmcidOutcomes) {
-        const inputId = pmcidToPmid.get(prefixed) ?? prefixed;
+        const inputId = pmcidToInputId.get(prefixed) ?? prefixed;
         if (outcome.kind === 'hit') {
           recoveredIds.add(inputId);
           continue;
@@ -602,7 +692,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
     // implementation doesn't resolve PMCID → DOI for that branch.
     for (const c of pmcidFallbackCandidates) {
       const prefixed = withPmcPrefix(c.pmcid);
-      chainByInput.get(pmcidToPmid.get(prefixed) ?? prefixed)?.push({
+      chainByInput.get(pmcidToInputId.get(prefixed) ?? prefixed)?.push({
         tier: 'unpaywall',
         outcome: 'not-attempted',
         detail: 'pmcids input does not resolve a DOI for Unpaywall',

@@ -9,7 +9,7 @@
 
 
 
-[![Version](https://img.shields.io/badge/Version-2.7.10-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pubmed-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pubmed-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pubmed-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-2.7.11-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pubmed-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pubmed-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pubmed-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -78,7 +78,7 @@ Fetch full article metadata by PubMed IDs.
 
 Fetch full-text articles via a three-stage chain: NCBI PMC EFetch → Europe PMC `fullTextXML` → Unpaywall.
 
-- Accepts exactly one of `pmcids` (direct PMC IDs), `pmids` (PubMed IDs, auto-resolved), or `dois` (covers preprints and EPMC-only OA records that lack PMID/PMCID)
+- Accepts exactly one of `pmcids` (direct PMC IDs), `pmids` (PubMed IDs, auto-resolved), or `dois` (auto-resolved to PMC via the ID Converter; preprints and EPMC-only OA fall through to Europe PMC / Unpaywall)
 - NCBI PMC and Europe PMC both return structured JATS; output records origin via `viaSource: "pmc" | "europepmc" | "unpaywall"`
 - Europe PMC layer (enabled by default; disable with `EUROPEPMC_ENABLED=false`) recovers PMC-counterpart records that NCBI PMC EFetch missed, and resolves DOI input to PMC counterparts when one exists. EPMC's `fullTextXML` is PMC-keyed, so preprints (PPR), patents (PAT), and Agricola (AGR) are reachable via `pubmed_europepmc_search` for metadata but have no full text via this chain.
 - Unpaywall layer (enabled by setting `UNPAYWALL_EMAIL`) resolves DOIs to legal OA copies; extracts HTML landing pages to Markdown via Defuddle or PDFs to text via unpdf

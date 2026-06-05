@@ -40,7 +40,9 @@ vi.mock('@cyanheads/mcp-ts-core/utils', async () => {
   };
 });
 
-const { fetchFulltextTool } = await import('@/mcp-server/tools/definitions/fetch-fulltext.tool.js');
+const { fetchFulltextTool, buildFulltextDescription } = await import(
+  '@/mcp-server/tools/definitions/fetch-fulltext.tool.js'
+);
 
 /**
  * Configure `mockEFetch` to dispatch by `db` — mirrors production:
@@ -138,6 +140,49 @@ describe('fetchFulltextTool', () => {
         dois: ['10.1/x'],
       });
       expect(parsed.success).toBe(false);
+    });
+  });
+
+  describe('buildFulltextDescription (config-aware tiers, issue #65)', () => {
+    it('advertises Europe PMC and Unpaywall when both tiers are enabled', () => {
+      const d = buildFulltextDescription({ europePmc: true, unpaywall: true });
+      expect(d).toContain('Europe PMC');
+      expect(d).toContain('Unpaywall');
+      expect(d).toContain('ID Converter');
+    });
+
+    it('advertises only Europe PMC when Unpaywall is disabled', () => {
+      const d = buildFulltextDescription({ europePmc: true, unpaywall: false });
+      expect(d).toContain('Europe PMC');
+      expect(d).not.toContain('Unpaywall');
+    });
+
+    it('advertises only Unpaywall when Europe PMC is disabled', () => {
+      const d = buildFulltextDescription({ europePmc: false, unpaywall: true });
+      expect(d).toContain('Unpaywall');
+      expect(d).not.toContain('Europe PMC');
+    });
+
+    it('advertises no fallback when both tiers are disabled', () => {
+      const d = buildFulltextDescription({ europePmc: false, unpaywall: false });
+      expect(d).not.toContain('Europe PMC');
+      expect(d).not.toContain('Unpaywall');
+      expect(d).toContain('PubMed Central only');
+    });
+
+    it('always names the three input shapes and the ID Converter DOI path', () => {
+      for (const tiers of [
+        { europePmc: true, unpaywall: true },
+        { europePmc: true, unpaywall: false },
+        { europePmc: false, unpaywall: true },
+        { europePmc: false, unpaywall: false },
+      ]) {
+        const d = buildFulltextDescription(tiers);
+        expect(d).toContain('`pmcids`');
+        expect(d).toContain('`pmids`');
+        expect(d).toContain('`dois`');
+        expect(d).toContain('ID Converter');
+      }
     });
   });
 
@@ -444,6 +489,9 @@ describe('fetchFulltextTool', () => {
         resolve: mockUnpaywallResolve,
         fetchContent: mockUnpaywallFetchContent,
       });
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.21203/x', errmsg: 'Identifier not found in PMC' },
+      ]);
       mockEpmcSearch.mockResolvedValue({
         hits: [{ id: 'PPR42', source: 'PPR', doi: '10.21203/x' }],
         hitCount: 1,
@@ -464,7 +512,7 @@ describe('fetchFulltextTool', () => {
           idType: 'doi',
           reason: 'no-oa',
           triedTiers: [
-            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI input bypasses PMC EFetch' },
+            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI has no PMC counterpart' },
             {
               tier: 'europepmc',
               outcome: 'no-fulltext',
@@ -1040,8 +1088,11 @@ describe('fetchFulltextTool', () => {
       });
     }
 
-    it('skips PMC EFetch entirely for dois input', async () => {
+    it('resolves dois via the PMC ID Converter and skips PMC EFetch when no PMCID resolves', async () => {
       withEpmcAndUnpaywall();
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1000/test', errmsg: 'Identifier not found in PMC' },
+      ]);
       mockEpmcSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*' });
       mockUnpaywallResolve.mockResolvedValue({ kind: 'no-oa', reason: 'no oa' });
 
@@ -1049,7 +1100,13 @@ describe('fetchFulltextTool', () => {
       const input = fetchFulltextTool.input.parse({ dois: ['10.1000/test'] });
       await fetchFulltextTool.handler(input, ctx);
 
-      expect(mockIdConvert).not.toHaveBeenCalled();
+      // DOI input now resolves through the converter (idtype='doi'); a DOI with
+      // no PMC counterpart still skips the PMC EFetch stage.
+      expect(mockIdConvert).toHaveBeenCalledWith(
+        ['10.1000/test'],
+        'doi',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
       const pmcCalls = mockEFetch.mock.calls.filter(
         ([params]: [{ db: string }]) => params.db === 'pmc',
       );
@@ -1061,6 +1118,10 @@ describe('fetchFulltextTool', () => {
       // requires a hit with a PMC counterpart (`pmcid`). Preprints (`PPR`) and
       // MED-only records have no PMC ID and never return JATS via EPMC.
       withEpmcAndUnpaywall();
+      // The converter can't place this DOI in PMC, so it falls to EPMC-by-DOI.
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1/x', errmsg: 'Identifier not found in PMC' },
+      ]);
       mockEpmcSearch.mockResolvedValue({
         hits: [{ id: '42', source: 'MED', pmid: '42', pmcid: 'PMC42', doi: '10.1/x' }],
         hitCount: 1,
@@ -1104,6 +1165,9 @@ describe('fetchFulltextTool', () => {
 
     it('falls through to Unpaywall when EPMC has no fullTextXML for the DOI', async () => {
       withEpmcAndUnpaywall();
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1000/test', errmsg: 'Identifier not found in PMC' },
+      ]);
       mockEpmcSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*' });
       mockUnpaywallResolve.mockResolvedValue({
         kind: 'found',
@@ -1135,6 +1199,9 @@ describe('fetchFulltextTool', () => {
 
     it('reports unavailable when both EPMC and Unpaywall fail', async () => {
       withEpmcAndUnpaywall();
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1000/missing', errmsg: 'Identifier not found in PMC' },
+      ]);
       mockEpmcSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*' });
       mockUnpaywallResolve.mockResolvedValue({ kind: 'no-oa', reason: 'no oa' });
 
@@ -1149,7 +1216,7 @@ describe('fetchFulltextTool', () => {
           idType: 'doi',
           reason: 'no-oa',
           triedTiers: [
-            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI input bypasses PMC EFetch' },
+            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI has no PMC counterpart' },
             { tier: 'europepmc', outcome: 'miss' },
             { tier: 'unpaywall', outcome: 'no-oa', detail: 'no oa' },
           ],
@@ -1158,7 +1225,11 @@ describe('fetchFulltextTool', () => {
     });
 
     it('reports unavailable when EPMC is disabled and Unpaywall is unset', async () => {
-      // No EPMC mock; no Unpaywall mock — both services return undefined
+      // EPMC and Unpaywall services are undefined (disabled); only the converter
+      // runs, and it can't place this DOI in PMC.
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1000/foo', errmsg: 'Identifier not found in PMC' },
+      ]);
       const ctx = createMockContext();
       const input = fetchFulltextTool.input.parse({ dois: ['10.1000/foo'] });
       const result = await fetchFulltextTool.handler(input, ctx);
@@ -1169,9 +1240,172 @@ describe('fetchFulltextTool', () => {
           idType: 'doi',
           reason: 'no-pmc-fallback-disabled',
           triedTiers: [
-            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI input bypasses PMC EFetch' },
+            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI has no PMC counterpart' },
             { tier: 'europepmc', outcome: 'not-attempted', detail: 'EUROPEPMC_ENABLED=false' },
             { tier: 'unpaywall', outcome: 'not-attempted', detail: 'UNPAYWALL_EMAIL is not set' },
+          ],
+        },
+      ]);
+    });
+  });
+
+  describe('dois → PMC ID Converter resolution (issue #64)', () => {
+    function withEpmcAndUnpaywall() {
+      mockGetEpmcService.mockReturnValue({
+        search: mockEpmcSearch,
+        fullTextXml: mockEpmcFullTextXml,
+        parseFullTextXml: mockEpmcParseFullTextXml,
+      });
+      mockGetUnpaywallService.mockReturnValue({
+        resolve: mockUnpaywallResolve,
+        fetchContent: mockUnpaywallFetchContent,
+      });
+    }
+
+    it('resolves a DOI to its PMCID and returns structured JATS', async () => {
+      // The reported bug: a DOI whose PMC copy is reachable only via the ID
+      // Converter (EPMC search-by-DOI returns the preprint PPR, which has no PMC
+      // counterpart). Converter → PMCID → PMC EFetch must return the JATS.
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1101/2025.09.12.675873', pmcid: 'PMC13060058', pmid: '41959413' },
+      ]);
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC13060058',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC13060058/',
+        pmid: '41959413',
+        doi: '10.1101/2025.09.12.675873',
+        title: 'Converter-resolved article',
+        sections: [{ title: 'Results', text: 'Body.' }],
+      });
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [{ article: [] }] }]);
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ dois: ['10.1101/2025.09.12.675873'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(mockIdConvert).toHaveBeenCalledWith(
+        ['10.1101/2025.09.12.675873'],
+        'doi',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      // The resolved PMCID is routed into the PMC EFetch batch (digits only).
+      expect(mockEFetch).toHaveBeenCalledWith(
+        { db: 'pmc', id: '13060058', retmode: 'xml' },
+        expect.objectContaining({ retmode: 'xml', useOrderedParser: true }),
+      );
+      expect(result.totalReturned).toBe(1);
+      const article = result.articles[0];
+      expect(article?.source).toBe('pmc');
+      if (article?.source === 'pmc') {
+        expect(article.viaSource).toBe('pmc');
+        expect(article.pmcId).toBe('PMC13060058');
+        expect(article.doi).toBe('10.1101/2025.09.12.675873');
+      }
+      expect(result.unavailable).toBeUndefined();
+    });
+
+    it('handles a mixed DOI batch — some resolve to PMC, some do not', async () => {
+      withEpmcAndUnpaywall();
+      mockIdConvert.mockResolvedValue([
+        { 'requested-id': '10.1/inpmc', pmcid: 'PMC500', pmid: '500' },
+        { 'requested-id': '10.1/notinpmc', errmsg: 'Identifier not found in PMC' },
+      ]);
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC500',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC500/',
+        doi: '10.1/inpmc',
+        title: 'In PMC',
+        sections: [],
+      });
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [{ article: [] }] }]);
+      mockEpmcSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*' });
+      mockUnpaywallResolve.mockResolvedValue({ kind: 'no-oa', reason: 'no oa' });
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ dois: ['10.1/inpmc', '10.1/notinpmc'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      // Only the PMC-resolved DOI is fetched from PMC (digits only).
+      expect(mockEFetch).toHaveBeenCalledWith(
+        { db: 'pmc', id: '500', retmode: 'xml' },
+        expect.objectContaining({ retmode: 'xml' }),
+      );
+      expect(result.totalReturned).toBe(1);
+      expect(result.articles[0]?.source).toBe('pmc');
+      if (result.articles[0]?.source === 'pmc') {
+        expect(result.articles[0].doi).toBe('10.1/inpmc');
+      }
+      // Only the unresolved DOI is unavailable, keyed by its original string.
+      expect(result.unavailable).toEqual([
+        {
+          id: '10.1/notinpmc',
+          idType: 'doi',
+          reason: 'no-oa',
+          triedTiers: [
+            { tier: 'pmc', outcome: 'not-attempted', detail: 'DOI has no PMC counterpart' },
+            { tier: 'europepmc', outcome: 'miss' },
+            { tier: 'unpaywall', outcome: 'no-oa', detail: 'no oa' },
+          ],
+        },
+      ]);
+    });
+
+    it('routes a converter-resolved DOI to Unpaywall when PMC EFetch misses the PMCID', async () => {
+      withEpmcAndUnpaywall();
+      mockIdConvert.mockResolvedValue([{ 'requested-id': '10.1/x', pmcid: 'PMC777', pmid: '777' }]);
+      // PMC returns no article for the resolved PMCID — the chain must continue,
+      // keyed by the original DOI.
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [] }]);
+      mockEpmcSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*' });
+      mockUnpaywallResolve.mockResolvedValue({
+        kind: 'found',
+        location: { url: 'https://repo.example.org/paper' },
+      });
+      mockUnpaywallFetchContent.mockResolvedValue({
+        kind: 'html',
+        fetchedUrl: 'https://repo.example.org/paper',
+        body: '<html><body>Body</body></html>',
+      });
+      mockHtmlExtract.mockResolvedValue({ content: 'Body content' });
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ dois: ['10.1/x'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      // Unpaywall is queried with the original DOI.
+      expect(mockUnpaywallResolve).toHaveBeenCalledWith('10.1/x', expect.any(AbortSignal));
+      expect(result.totalReturned).toBe(1);
+      const article = result.articles[0];
+      expect(article?.source).toBe('unpaywall');
+      if (article?.source === 'unpaywall') {
+        expect(article.doi).toBe('10.1/x');
+      }
+      expect(result.unavailable).toBeUndefined();
+    });
+
+    it('falls through when the ID Converter returns no record for a DOI', async () => {
+      withEpmcAndUnpaywall();
+      mockIdConvert.mockResolvedValue([]);
+      mockEpmcSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*' });
+      mockUnpaywallResolve.mockResolvedValue({ kind: 'no-oa', reason: 'no oa' });
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ dois: ['10.1/ghost'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(result.unavailable).toEqual([
+        {
+          id: '10.1/ghost',
+          idType: 'doi',
+          reason: 'no-oa',
+          triedTiers: [
+            {
+              tier: 'pmc',
+              outcome: 'not-attempted',
+              detail: 'ID Converter returned no record for this DOI',
+            },
+            { tier: 'europepmc', outcome: 'miss' },
+            { tier: 'unpaywall', outcome: 'no-oa', detail: 'no oa' },
           ],
         },
       ]);

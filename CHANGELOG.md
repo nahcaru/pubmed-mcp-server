@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.7.11](changelog/2.7.x/2.7.11.md) — 2026-06-04
+
+fetch_fulltext: DOI→PMCID resolution via PMC ID Converter (#64), config-aware tool description (#65)
+
 ## [2.7.10](changelog/2.7.x/2.7.10.md) — 2026-06-04
 
 Three ECitMatch fixes: HTTP 500 reclassified as retryable, dropped citations synthesized as not_found, citation validation requires journal or year
