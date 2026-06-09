@@ -195,6 +195,49 @@ describe('extractReferences', () => {
 
     expect(extractReferences(back)).toEqual([]);
   });
+
+  it('extracts references wrapped in citation-alternatives, preferring mixed-citation (regression #66)', () => {
+    // <ref id="CR15"><citation-alternatives><element-citation/><mixed-citation/></citation-alternatives></ref>
+    // — the AlphaFold (PMC8371605) shape that previously dropped 64 of 84 refs.
+    const back = el('back', [
+      el('ref-list', [
+        el(
+          'ref',
+          [
+            el('label', [t('15')]),
+            el('citation-alternatives', [
+              el('element-citation', [t('Structured citation form.')]),
+              el('mixed-citation', [t('Jumper J, et al. Nature. 2021;596:583-9.')]),
+            ]),
+          ],
+          { '@_id': 'CR15' },
+        ),
+        // a direct mixed-citation ref still works alongside wrapped ones
+        el('ref', [el('mixed-citation', [t('Direct ref. Science. 2020.')])], { '@_id': 'CR16' }),
+      ]),
+    ]);
+    const refs = extractReferences(back);
+    expect(refs).toHaveLength(2);
+    expect(refs[0]?.id).toBe('CR15');
+    expect(refs[0]?.label).toBe('15');
+    // prefers the readable mixed-citation form inside citation-alternatives
+    expect(refs[0]?.citation).toBe('Jumper J, et al. Nature. 2021;596:583-9.');
+    expect(refs[1]?.id).toBe('CR16');
+    expect(refs[1]?.citation).toBe('Direct ref. Science. 2020.');
+  });
+
+  it('falls back to element-citation inside citation-alternatives when no mixed form exists', () => {
+    const back = el('back', [
+      el('ref-list', [
+        el('ref', [el('citation-alternatives', [el('element-citation', [t('Element only.')])])], {
+          '@_id': 'CR1',
+        }),
+      ]),
+    ]);
+    const refs = extractReferences(back);
+    expect(refs).toHaveLength(1);
+    expect(refs[0]?.citation).toBe('Element only.');
+  });
 });
 
 describe('parsePmcArticle', () => {

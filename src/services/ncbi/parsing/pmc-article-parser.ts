@@ -252,7 +252,11 @@ function extractSection(sec: JatsNode): ParsedPmcSection | null {
 
 // ─── References ─────────────────────────────────────────────────────────────
 
-/** Extract references from a `<back>` node. Prefers mixed-citation over element-citation. */
+/**
+ * Extract references from a `<back>` node. Prefers mixed-citation over
+ * element-citation, descending into `<citation-alternatives>` when a ref carries
+ * both forms there rather than as direct children of `<ref>`.
+ */
 export function extractReferences(back: JatsNode | undefined): ParsedPmcReference[] {
   if (!back) return [];
   const refList = findOne(back, 'ref-list');
@@ -260,7 +264,13 @@ export function extractReferences(back: JatsNode | undefined): ParsedPmcReferenc
 
   const results: ParsedPmcReference[] = [];
   for (const ref of findAll(refList, 'ref')) {
-    const citationNode = findOne(ref, 'mixed-citation') ?? findOne(ref, 'element-citation');
+    // JATS wraps the two citation forms in <citation-alternatives> (the NLM
+    // construct carrying both a structured <element-citation> and a readable
+    // <mixed-citation>). findOne matches direct children only, so resolve that
+    // container first; refs with a direct citation node fall through to `ref`.
+    const container = findOne(ref, 'citation-alternatives') ?? ref;
+    const citationNode =
+      findOne(container, 'mixed-citation') ?? findOne(container, 'element-citation');
     if (!citationNode) continue;
     const citation = textContent(citationNode);
     if (!citation) continue;
