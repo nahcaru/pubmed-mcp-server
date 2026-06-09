@@ -154,6 +154,91 @@ describe('pubmedEuropepmcSearchTool', () => {
     expect(result.hits[0]?.epmcUrl).toBe('https://europepmc.org/article/PPR/PPR9');
   });
 
+  describe('PPR date-sort advisory (issue #67)', () => {
+    const pprHit = { id: 'PPR1', source: 'PPR', firstPublicationDate: '2026-03-13' };
+
+    it('advises when P_PDATE_D sort is requested for a PPR-only result set', async () => {
+      mockSearch.mockResolvedValue({ hits: [pprHit], hitCount: 5, cursorMark: '*', query: 'q' });
+      const ctx = createMockContext();
+      await pubmedEuropepmcSearchTool.handler(
+        pubmedEuropepmcSearchTool.input.parse({
+          query: 'q',
+          sources: ['PPR'],
+          sort: 'P_PDATE_D desc',
+        }),
+        ctx,
+      );
+      const notice = getEnrichment(ctx).notice ?? '';
+      expect(notice).toContain('P_PDATE_D');
+      expect(notice).toContain('PPR');
+      expect(notice).toContain('PUB_YEAR');
+      expect(notice).toContain('firstPublicationDate');
+    });
+
+    it('is case-insensitive on the sort field token', async () => {
+      mockSearch.mockResolvedValue({ hits: [pprHit], hitCount: 5, cursorMark: '*', query: 'q' });
+      const ctx = createMockContext();
+      await pubmedEuropepmcSearchTool.handler(
+        pubmedEuropepmcSearchTool.input.parse({
+          query: 'q',
+          sources: ['PPR'],
+          sort: 'p_pdate_d asc',
+        }),
+        ctx,
+      );
+      expect(getEnrichment(ctx).notice).toContain('P_PDATE_D');
+    });
+
+    it('does NOT advise when the result set spans non-PPR sources', async () => {
+      mockSearch.mockResolvedValue({ hits: [pprHit], hitCount: 5, cursorMark: '*', query: 'q' });
+      const ctx = createMockContext();
+      // Default sources (MED, PMC, PPR) — not PPR-only.
+      await pubmedEuropepmcSearchTool.handler(
+        pubmedEuropepmcSearchTool.input.parse({ query: 'q', sort: 'P_PDATE_D desc' }),
+        ctx,
+      );
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('does NOT advise for PUB_YEAR sort on PPR-only (EPMC honors it)', async () => {
+      mockSearch.mockResolvedValue({ hits: [pprHit], hitCount: 5, cursorMark: '*', query: 'q' });
+      const ctx = createMockContext();
+      await pubmedEuropepmcSearchTool.handler(
+        pubmedEuropepmcSearchTool.input.parse({
+          query: 'q',
+          sources: ['PPR'],
+          sort: 'PUB_YEAR desc',
+        }),
+        ctx,
+      );
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('does NOT advise for PPR-only without a sort', async () => {
+      mockSearch.mockResolvedValue({ hits: [pprHit], hitCount: 5, cursorMark: '*', query: 'q' });
+      const ctx = createMockContext();
+      await pubmedEuropepmcSearchTool.handler(
+        pubmedEuropepmcSearchTool.input.parse({ query: 'q', sources: ['PPR'] }),
+        ctx,
+      );
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('empty-result notice takes precedence over the date-sort advisory', async () => {
+      mockSearch.mockResolvedValue({ hits: [], hitCount: 0, cursorMark: '*', query: 'q' });
+      const ctx = createMockContext();
+      await pubmedEuropepmcSearchTool.handler(
+        pubmedEuropepmcSearchTool.input.parse({
+          query: 'q',
+          sources: ['PPR'],
+          sort: 'P_PDATE_D desc',
+        }),
+        ctx,
+      );
+      expect(getEnrichment(ctx).notice).toMatch(/No results/);
+    });
+  });
+
   describe('format()', () => {
     it('renders hits with all key fields', () => {
       const blocks = pubmedEuropepmcSearchTool.format!({

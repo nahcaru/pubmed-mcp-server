@@ -87,7 +87,7 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
       .string()
       .optional()
       .describe(
-        'Optional EPMC sort: `<field> asc|desc`. Documented sortable fields: `P_PDATE_D` (publication date), `CITED` (citation count), `AUTH_FIRST` (first author surname), `PUB_YEAR` (publication year). Examples: `P_PDATE_D desc` (newest first), `CITED desc` (most cited). Omit for relevance ranking. Fields outside the documented set are rejected by EPMC.',
+        'Optional EPMC sort: `<field> asc|desc`. Documented sortable fields: `P_PDATE_D` (publication date), `CITED` (citation count), `AUTH_FIRST` (first author surname), `PUB_YEAR` (publication year). Examples: `P_PDATE_D desc` (newest first), `CITED desc` (most cited). Omit for relevance ranking. Fields outside the documented set are rejected by EPMC. Note: `P_PDATE_D` is ignored for preprint-only (`sources: ["PPR"]`) result sets — preprints have no populated publication date, so use `PUB_YEAR` to order preprints by date.',
       ),
   }),
 
@@ -211,10 +211,21 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
       epmcUrl: `https://europepmc.org/article/${h.source}/${h.id}`,
     }));
 
-    const notice =
-      result.hitCount === 0
-        ? 'No results matched your Europe PMC query. Try broadening the query, removing source filters, or running pubmed_spell_check on the term.'
-        : undefined;
+    // Europe PMC accepts a `P_PDATE_D` sort but silently ignores it for
+    // preprint-only (PPR) result sets — preprints have no populated publication
+    // date, so results come back relevance-ranked, not date-ordered. Signal it so
+    // a caller asking for "newest first" isn't misled by the silent fallback.
+    // (PUB_YEAR is honored for PPR; only the day-granularity P_PDATE_D is not.)
+    const sortField = input.sort?.trim().split(/\s+/)[0]?.toUpperCase();
+    const isPprOnly = sources.length > 0 && sources.every((s) => s === 'PPR');
+    let notice: string | undefined;
+    if (result.hitCount === 0) {
+      notice =
+        'No results matched your Europe PMC query. Try broadening the query, removing source filters, or running pubmed_spell_check on the term.';
+    } else if (sortField === 'P_PDATE_D' && isPprOnly) {
+      notice =
+        'Europe PMC ignores `P_PDATE_D` sort for preprint-only (PPR) results — preprints have no populated publication date, so records are returned in relevance order, not by date. To order preprints by date, sort by `PUB_YEAR`, or re-rank the returned page by each record’s `firstPublicationDate`.';
+    }
 
     ctx.log.info('pubmed_europepmc_search completed', {
       hitCount: result.hitCount,
