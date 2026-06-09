@@ -129,6 +129,61 @@ export class EuropePmcApiClient {
     return { kind: 'found', xml };
   }
 
+  /**
+   * Fetch citations for a PubMed article (articles that cite this one).
+   * Endpoint: GET /MED/{pmid}/citations?page=1&pageSize=N&format=json
+   * Returns the raw JSON response body as a string.
+   */
+  citations(pmid: string, pageSize: number, page: number, signal?: AbortSignal): Promise<string> {
+    const url = `${EUROPEPMC_API_BASE}/MED/${encodeURIComponent(pmid)}/citations?page=${page}&pageSize=${pageSize}&format=json`;
+    return this.fetchLinksJson(url, 'EuropePmcCitations', pmid, signal);
+  }
+
+  /**
+   * Fetch references from a PubMed article (articles this one cites).
+   * Endpoint: GET /MED/{pmid}/references?page=1&pageSize=N&format=json
+   * Returns the raw JSON response body as a string.
+   */
+  references(pmid: string, pageSize: number, page: number, signal?: AbortSignal): Promise<string> {
+    const url = `${EUROPEPMC_API_BASE}/MED/${encodeURIComponent(pmid)}/references?page=${page}&pageSize=${pageSize}&format=json`;
+    return this.fetchLinksJson(url, 'EuropePmcReferences', pmid, signal);
+  }
+
+  /** Helper: fetch a links (citations/references) JSON URL and return the body. */
+  private async fetchLinksJson(
+    url: string,
+    operation: string,
+    pmid: string,
+    signal?: AbortSignal,
+  ): Promise<string> {
+    const ctx = requestContextService.createRequestContext({ operation, pmid });
+
+    let response: Response;
+    try {
+      response = await fetchWithTimeout(url, this.config.timeoutMs, ctx, {
+        headers: { Accept: 'application/json', 'User-Agent': USER_AGENT },
+        ...(signal && { signal }),
+      });
+    } catch (error: unknown) {
+      if (error instanceof McpError) throw error;
+      const msg = error instanceof Error ? error.message : String(error);
+      throw serviceUnavailable(
+        `Europe PMC links request failed: ${msg}`,
+        { reason: 'europepmc_unreachable', ...recoveryFor('europepmc_unreachable') },
+        { cause: error },
+      );
+    }
+
+    if (!response.ok) {
+      throw await httpErrorFromResponse(response, {
+        service: 'Europe PMC',
+        data: { url, reason: 'europepmc_unreachable', ...recoveryFor('europepmc_unreachable') },
+      });
+    }
+
+    return response.text();
+  }
+
   private buildSearchUrl(params: EuropePmcSearchParams): string {
     const finalParams: Record<string, string> = {
       query: this.buildQueryString(params),

@@ -1,16 +1,24 @@
 /**
  * @fileoverview PubMed related articles tool — finds articles related to a
- * source article via NCBI ELink and enriches results with ESummary data.
+ * source article via a provider chain: NCBI ELink (primary) → Europe PMC →
+ * OpenAlex. First success wins; results are never merged across sources.
+ * Supports offset pagination on the returned window.
  * @module src/mcp-server/tools/definitions/find-related.tool
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { NCBI_SERVICE_ERRORS } from '@/services/error-contracts.js';
+import {
+  EUROPEPMC_SERVICE_ERRORS,
+  NCBI_SERVICE_ERRORS,
+  OPENALEX_SERVICE_ERRORS,
+} from '@/services/error-contracts.js';
+import { getEuropePmcService } from '@/services/europe-pmc/europe-pmc-service.js';
 import { getNcbiService } from '@/services/ncbi/ncbi-service.js';
 import { extractBriefSummaries } from '@/services/ncbi/parsing/esummary-parser.js';
 import { ensureArray } from '@/services/ncbi/parsing/xml-helpers.js';
 import type { ParsedBriefSummary } from '@/services/ncbi/types.js';
+import { getOpenAlexServiceOptional } from '@/services/openalex/openalex-service.js';
 import { conceptMeta, EDAM_DATA_RETRIEVAL, SCHEMA_SCHOLARLY_ARTICLE } from './_concepts.js';
 import { pmidStringSchema } from './_schemas.js';
 
@@ -39,17 +47,151 @@ function extractValue(field: string | number | { '#text'?: string | number } | u
   return String(field);
 }
 
+// ─── Provider result type ─────────────────────────────────────────────────────
+
+/**
+ * Common result shape returned by each provider.
+ * `allPmids` is the full unsliced set from the provider — the tool windows it.
+ */
+interface ProviderResult {
+  allPmids: string[];
+  source: 'ncbi' | 'europepmc' | 'openalex';
+  totalCount: number;
+}
+
+// ─── NCBI provider ────────────────────────────────────────────────────────────
+
+async function ncbiProvider(
+  pmid: string,
+  relationship: 'similar' | 'cited_by' | 'references',
+  signal: AbortSignal,
+): Promise<ProviderResult> {
+  const ncbi = getNcbiService();
+  const linkName =
+    relationship === 'cited_by'
+      ? 'pubmed_pubmed_citedin'
+      : relationship === 'references'
+        ? 'pubmed_pubmed_refs'
+        : 'pubmed_pubmed';
+
+  const eLinkResult = (await ncbi.eLink(
+    {
+      dbfrom: 'pubmed',
+      db: 'pubmed',
+      id: pmid,
+      cmd: 'neighbor',
+      linkname: linkName,
+      retmode: 'xml',
+    },
+    { signal },
+  )) as ELinkResponse;
+
+  const eLinkResultsArray = ensureArray(eLinkResult?.eLinkResult);
+  const firstResult = eLinkResultsArray[0] as ELinkResultItem | undefined;
+  const linkSet = firstResult?.LinkSet;
+  let foundPmids: string[] = [];
+
+  if (linkSet?.LinkSetDb) {
+    const linkSetDbArray = ensureArray(linkSet.LinkSetDb);
+    const targetDb = linkSetDbArray.find((db) => db.LinkName === linkName) ?? linkSetDbArray[0];
+
+    if (targetDb?.Link) {
+      foundPmids = ensureArray(targetDb.Link)
+        .map((link: XmlELinkItem) => extractValue(link.Id))
+        .filter((p) => p && p !== pmid && p !== '0');
+    }
+  }
+
+  return { allPmids: foundPmids, totalCount: foundPmids.length, source: 'ncbi' };
+}
+
+// ─── Europe PMC provider ──────────────────────────────────────────────────────
+
+/**
+ * Europe PMC supports citations and references for MED-source records.
+ * It has no `similar` equivalent, so we skip it for that relationship.
+ */
+function epmcSupports(relationship: 'similar' | 'cited_by' | 'references'): boolean {
+  return relationship === 'cited_by' || relationship === 'references';
+}
+
+/**
+ * Fetch enough pages to cover [offset, offset+maxResults) from EPMC.
+ * EPMC uses 1-based page numbers and its endpoint supports pageSize up to 1000.
+ * We fetch one page containing the window we need.
+ */
+async function epmcProvider(
+  pmid: string,
+  relationship: 'cited_by' | 'references',
+  offset: number,
+  maxResults: number,
+  signal: AbortSignal,
+): Promise<ProviderResult> {
+  const epmc = getEuropePmcService();
+  if (!epmc) throw new Error('Europe PMC service not available');
+
+  // EPMC is 1-based; we need the page covering [offset, offset+maxResults).
+  // Simplest approach: fetch one page starting at the right position.
+  // pageSize = maxResults, page = floor(offset/maxResults) + 1 won't align
+  // cleanly. Instead, use a large pageSize and slice client-side, capped at 100.
+  const pageSize = Math.min(offset + maxResults, 100);
+  const page = 1;
+
+  const result =
+    relationship === 'cited_by'
+      ? await epmc.citations(pmid, pageSize, page, signal)
+      : await epmc.references(pmid, pageSize, page, signal);
+
+  return { allPmids: result.pmids, totalCount: result.totalCount, source: 'europepmc' };
+}
+
+// ─── OpenAlex provider ────────────────────────────────────────────────────────
+
+async function openAlexProvider(
+  pmid: string,
+  relationship: 'similar' | 'cited_by' | 'references',
+  maxNeeded: number,
+  signal: AbortSignal,
+): Promise<ProviderResult> {
+  const oa = getOpenAlexServiceOptional();
+  if (!oa) throw new Error('OpenAlex service not available');
+
+  let result: { pmids: string[]; totalCount: number };
+  switch (relationship) {
+    case 'similar':
+      result = await oa.similar(pmid, maxNeeded, signal);
+      break;
+    case 'cited_by':
+      result = await oa.citedBy(pmid, maxNeeded, signal);
+      break;
+    case 'references':
+      result = await oa.references(pmid, maxNeeded, signal);
+      break;
+  }
+
+  return { allPmids: result.pmids, totalCount: result.totalCount, source: 'openalex' };
+}
+
+/** Compact, log-safe description of an unknown thrown value. */
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 // ─── Tool Definition ─────────────────────────────────────────────────────────
 
 export const findRelatedTool = tool('pubmed_find_related', {
   description:
-    'Find articles related to a source article — similar content (similar), articles citing this one (cited_by), or articles this one cites (references).',
+    'Find articles related to a source article — similar content (similar), articles citing this one (cited_by), or articles this one cites (references). Uses NCBI ELink as the primary source; falls back to Europe PMC then OpenAlex when NCBI is unavailable.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_SCHOLARLY_ARTICLE, EDAM_DATA_RETRIEVAL]),
   sourceUrl:
     'https://github.com/cyanheads/pubmed-mcp-server/blob/main/src/mcp-server/tools/definitions/find-related.tool.ts',
 
-  errors: [...NCBI_SERVICE_ERRORS] as const,
+  errors: [
+    ...NCBI_SERVICE_ERRORS,
+    ...EUROPEPMC_SERVICE_ERRORS,
+    ...OPENALEX_SERVICE_ERRORS,
+  ] as const,
 
   input: z.object({
     pmid: pmidStringSchema.describe('Source PubMed ID'),
@@ -60,11 +202,20 @@ export const findRelatedTool = tool('pubmed_find_related', {
         'Relationship type: similar (content-based), cited_by (articles citing this one), references (articles this one cites)',
       ),
     maxResults: z.number().int().min(1).max(50).default(10).describe('Maximum related articles'),
+    offset: z
+      .number()
+      .int()
+      .min(0)
+      .default(0)
+      .describe(
+        'Result offset for pagination (0-based); page through results by incrementing by maxResults',
+      ),
   }),
 
   output: z.object({
     sourcePmid: z.string().describe('Source PubMed ID'),
     relationship: z.enum(['similar', 'cited_by', 'references']).describe('Relationship type used'),
+    offset: z.number().describe('Result offset used'),
     articles: z
       .array(
         z
@@ -80,23 +231,25 @@ export const findRelatedTool = tool('pubmed_find_related', {
       .describe('Related articles'),
   }),
 
-  // Result-set context the agent reasons with — the pre-truncation match count and
-  // recovery guidance (invalid source PMID, or references for a non-PMC source).
-  // Surfaced via ctx.enrich(...) to structuredContent and content[]; out of the return.
+  // Result-set context the agent reasons with — pre-truncation match count,
+  // the answering provider, and recovery guidance. Surfaced via ctx.enrich(...)
+  // to structuredContent and content[]; kept out of the domain return.
   enrichment: {
-    totalFound: z.number().describe('Total related articles found before truncation'),
+    totalFound: z.number().describe('Total related articles found before windowing'),
+    source: z
+      .enum(['ncbi', 'europepmc', 'openalex'])
+      .describe('Provider that answered this request'),
     notice: z
       .string()
       .optional()
       .describe(
-        'Optional guidance when results are empty — e.g. invalid source PMID, or references requested for a non-PMC source. Absent on successful result pages.',
+        'Guidance when results are empty, a fallback provider answered, or offset overshot. Absent on a clean NCBI result page.',
       ),
   },
 
-  // content[] trailer presentation for the enrichment block. totalFound is scalar —
-  // a label restores the human-readable key; notice renders as a blockquote kind-tag.
   enrichmentTrailer: {
     totalFound: { label: 'Total Found' },
+    source: { label: 'Source' },
   },
 
   async handler(input, ctx) {
@@ -104,54 +257,99 @@ export const findRelatedTool = tool('pubmed_find_related', {
     ctx.log.debug('Finding related articles', {
       pmid: input.pmid,
       relationship: input.relationship,
+      offset: input.offset,
     });
 
-    // `cmd=neighbor_score` is unstable on NCBI's side — it intermittently fails
-    // with a TXCLIENT::readAll EOF for high-traffic PMIDs. `cmd=neighbor` returns
-    // the `pubmed_pubmed` list in relevance order anyway, so we keep the ranking
-    // without the (arbitrary-scale) numeric score.
-    const linkName =
-      input.relationship === 'cited_by'
-        ? 'pubmed_pubmed_citedin'
-        : input.relationship === 'references'
-          ? 'pubmed_pubmed_refs'
-          : 'pubmed_pubmed';
+    // ── Provider chain ──────────────────────────────────────────────────────
+    // Try NCBI first; on failure fall back to Europe PMC then OpenAlex (first
+    // success wins, never merged). A non-PMC `references` source returns an empty
+    // NCBI set rather than throwing — that structural fallback is handled below.
 
-    const eLinkResult = (await ncbi.eLink(
-      {
-        dbfrom: 'pubmed',
-        db: 'pubmed',
-        id: input.pmid,
-        cmd: 'neighbor',
-        linkname: linkName,
-        retmode: 'xml',
-      },
-      { signal: ctx.signal },
-    )) as ELinkResponse;
-    const eLinkResultsArray = ensureArray(eLinkResult?.eLinkResult);
-    const firstResult = eLinkResultsArray[0] as ELinkResultItem | undefined;
-    const linkSet = firstResult?.LinkSet;
-    let foundPmids: string[] = [];
+    let providerResult: ProviderResult | null = null;
+    let providerError: unknown;
+    // Records WHY a non-primary provider answered, so the provenance notice can
+    // distinguish an NCBI outage from references coverage for a non-PMC source.
+    let fallbackKind: 'outage' | 'references_coverage' | undefined;
 
-    if (linkSet?.LinkSetDb) {
-      const linkSetDbArray = ensureArray(linkSet.LinkSetDb);
-      const targetDb = linkSetDbArray.find((db) => db.LinkName === linkName) ?? linkSetDbArray[0];
+    // 1. NCBI (primary)
+    try {
+      providerResult = await ncbiProvider(input.pmid, input.relationship, ctx.signal);
+    } catch (err) {
+      ctx.log.warning('NCBI eLink failed, trying fallback providers', {
+        pmid: input.pmid,
+        err: describeError(err),
+      });
+      providerError = err;
+    }
 
-      if (targetDb?.Link) {
-        foundPmids = ensureArray(targetDb.Link)
-          .map((link: XmlELinkItem) => extractValue(link.Id))
-          .filter((pmid) => pmid && pmid !== input.pmid && pmid !== '0');
+    // 2. Europe PMC (fallback for cited_by / references only). An empty EPMC
+    //    result is not "served" — fall through to OpenAlex rather than return 0.
+    if (providerResult === null && epmcSupports(input.relationship)) {
+      try {
+        const epmcResult = await epmcProvider(
+          input.pmid,
+          input.relationship as 'cited_by' | 'references',
+          input.offset,
+          input.maxResults,
+          ctx.signal,
+        );
+        if (epmcResult.allPmids.length > 0) {
+          providerResult = epmcResult;
+          fallbackKind = 'outage';
+        }
+        providerError = undefined;
+      } catch (err) {
+        ctx.log.warning('Europe PMC fallback failed, trying OpenAlex', {
+          pmid: input.pmid,
+          err: describeError(err),
+        });
+        providerError = err;
       }
     }
 
-    const totalFound = foundPmids.length;
-    ctx.enrich({ totalFound });
-    if (foundPmids.length === 0) {
-      // ELink returns an empty LinkSet for both invalid source PMIDs and valid
-      // PMIDs that simply have no related articles, so a single ESummary on the
-      // source disambiguates the two cases for every relationship type. NCBI's
-      // pubmed_pubmed_refs ELink also only resolves references for PMC-indexed
-      // sources, so the same lookup yields the PMCID for the references hint.
+    // 3. OpenAlex (last resort for all relationships)
+    if (providerResult === null) {
+      const oa = getOpenAlexServiceOptional();
+      if (oa) {
+        try {
+          providerResult = await openAlexProvider(
+            input.pmid,
+            input.relationship,
+            input.offset + input.maxResults,
+            ctx.signal,
+          );
+          fallbackKind = 'outage';
+          providerError = undefined;
+        } catch (err) {
+          ctx.log.warning('OpenAlex fallback failed', {
+            pmid: input.pmid,
+            err: describeError(err),
+          });
+          providerError = err;
+        }
+      }
+    }
+
+    // ── Every provider failed ─────────────────────────────────────────────────
+    if (providerResult === null) {
+      ctx.enrich({ totalFound: 0, source: 'ncbi' });
+      ctx.enrich.notice(
+        `All providers failed to retrieve related articles (NCBI, Europe PMC, OpenAlex). Last error: ${describeError(providerError ?? 'unknown')}. Retry after a brief delay.`,
+      );
+      return {
+        sourcePmid: input.pmid,
+        relationship: input.relationship,
+        offset: input.offset,
+        articles: [],
+      };
+    }
+
+    // ── NCBI returned an empty set ──────────────────────────────────────────────
+    // ELink returns an empty LinkSet for both invalid source PMIDs and valid PMIDs
+    // with no neighbors; a single ESummary disambiguates and yields the PMCID. For
+    // `references`, a valid non-PMC source has no NCBI reference list — Europe PMC
+    // and OpenAlex serve references for any source, so try them before giving up.
+    if (providerResult.source === 'ncbi' && providerResult.allPmids.length === 0) {
       let sourceSummary: ParsedBriefSummary | undefined;
       let sourceConfirmedMissing = false;
       try {
@@ -161,70 +359,178 @@ export const findRelatedTool = tool('pubmed_find_related', {
         );
         const summaries = await extractBriefSummaries(summaryResult);
         sourceSummary = summaries[0];
-        // ESummary succeeded but returned nothing parseable — PMID is unknown.
         if (!sourceSummary?.title) sourceConfirmedMissing = true;
       } catch (err) {
         ctx.log.debug('Source PMID ESummary failed', { err });
-        // Key off the contract reason rather than the JSON-RPC code: the service
-        // layer stamps `ncbi_resource_not_found` for "unknown UID" responses,
-        // while transient transport failures keep their ServiceUnavailable code
-        // with no such reason.
         const reason =
           err instanceof McpError
             ? (err.data as { reason?: string } | undefined)?.reason
             : undefined;
-        if (reason === 'ncbi_resource_not_found') {
-          sourceConfirmedMissing = true;
-        }
+        if (reason === 'ncbi_resource_not_found') sourceConfirmedMissing = true;
       }
 
-      let notice: string | undefined;
       if (sourceConfirmedMissing) {
-        notice = `Source PMID ${input.pmid} not found in PubMed. Verify the ID with \`pubmed_fetch_articles\` or \`pubmed_search_articles\`.`;
-      } else if (sourceSummary?.title && input.relationship === 'references') {
-        const sourcePmcId = sourceSummary.pmcId;
-        notice = sourcePmcId
-          ? `No reference list found in PMC for PMID ${input.pmid} (PMCID ${sourcePmcId}).`
-          : `Reference lists require the source article to be indexed in PMC. PMID ${input.pmid} has no PMCID — references unavailable. Use pubmed_fetch_articles to inspect the article record, or try relationship: "similar" / "cited_by".`;
+        ctx.enrich({ totalFound: 0, source: 'ncbi' });
+        ctx.enrich.notice(
+          `Source PMID ${input.pmid} not found in PubMed. Verify the ID with \`pubmed_fetch_articles\` or \`pubmed_search_articles\`.`,
+        );
+        return {
+          sourcePmid: input.pmid,
+          relationship: input.relationship,
+          offset: input.offset,
+          articles: [],
+        };
       }
 
-      if (notice) ctx.enrich.notice(notice);
+      // References coverage fallback — only for a confirmed-valid source. NCBI
+      // resolves references only for PMC-indexed sources, so a valid non-PMC
+      // source returns empty; Europe PMC then OpenAlex serve them. An unconfirmed
+      // source (ESummary itself failed) stays silent — the empty set is most
+      // likely a transient NCBI issue, not a real "no references".
+      if (input.relationship === 'references' && sourceSummary?.title) {
+        let refFallback: ProviderResult | null = null;
+        const refAttempts: Array<() => Promise<ProviderResult>> = [
+          () => epmcProvider(input.pmid, 'references', input.offset, input.maxResults, ctx.signal),
+          () =>
+            openAlexProvider(input.pmid, 'references', input.offset + input.maxResults, ctx.signal),
+        ];
+        for (const attempt of refAttempts) {
+          try {
+            const result = await attempt();
+            if (result.allPmids.length > 0) {
+              refFallback = result;
+              break;
+            }
+          } catch (err) {
+            ctx.log.warning('References fallback provider failed', { err: describeError(err) });
+          }
+        }
+
+        if (refFallback) {
+          providerResult = refFallback;
+          fallbackKind = 'references_coverage';
+        } else {
+          ctx.enrich({ totalFound: 0, source: 'ncbi' });
+          const sourcePmcId = sourceSummary.pmcId;
+          ctx.enrich.notice(
+            sourcePmcId
+              ? `No reference list found for PMID ${input.pmid} (PMCID ${sourcePmcId}) via NCBI, Europe PMC, or OpenAlex.`
+              : `No reference list available for PMID ${input.pmid} via NCBI, Europe PMC, or OpenAlex. Use pubmed_fetch_articles to inspect the article record, or try relationship: "similar" / "cited_by".`,
+          );
+          return {
+            sourcePmid: input.pmid,
+            relationship: input.relationship,
+            offset: input.offset,
+            articles: [],
+          };
+        }
+      } else {
+        // similar / cited_by empty for a valid source, or references with an
+        // unconfirmed source — return the honest empty without a notice.
+        ctx.enrich({ totalFound: 0, source: 'ncbi' });
+        return {
+          sourcePmid: input.pmid,
+          relationship: input.relationship,
+          offset: input.offset,
+          articles: [],
+        };
+      }
+    }
+
+    // ── Window the result set + enrich ──────────────────────────────────────────
+    const { allPmids, totalCount, source } = providerResult;
+    ctx.enrich({ totalFound: totalCount, source });
+
+    // For NCBI the full neighbor set is in memory; for EPMC/OpenAlex the provider
+    // pre-fetched enough to cover the window. Slice the requested page either way.
+    const window = allPmids.slice(input.offset, input.offset + input.maxResults);
+
+    // Only the LAST ctx.enrich.notice survives, so collect the applicable
+    // fragments (overshoot, provenance, enrichment-degraded) and emit them once.
+    const notices: string[] = [];
+    if (input.offset > 0 && input.offset >= totalCount) {
+      notices.push(
+        `Offset ${input.offset} exceeds totalFound (${totalCount}). Reset offset to 0 or reduce it below ${totalCount} to page through results.`,
+      );
+    }
+    if (source !== 'ncbi') {
+      const providerName = source === 'europepmc' ? 'Europe PMC' : 'OpenAlex';
+      const detail =
+        source === 'openalex'
+          ? input.relationship === 'similar'
+            ? 'related_works — OpenAlex similarity, not PubMed’s neighbor algorithm'
+            : input.relationship === 'cited_by'
+              ? 'cites: filter'
+              : 'referenced_works'
+          : `${input.relationship === 'cited_by' ? 'citations' : 'references'} index`;
+      notices.push(
+        fallbackKind === 'references_coverage'
+          ? `NCBI has no PMC-indexed reference list for PMID ${input.pmid} — references served by ${providerName} (${detail}).`
+          : `NCBI eLink unavailable — related articles served by ${providerName} (${detail}).`,
+      );
+    }
+
+    if (window.length === 0) {
+      if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
       return {
         sourcePmid: input.pmid,
         relationship: input.relationship,
+        offset: input.offset,
         articles: [],
       };
     }
 
-    const pmidsToEnrich = foundPmids.slice(0, input.maxResults);
-    const summaryResult = await ncbi.eSummary(
-      {
-        db: 'pubmed',
-        id: pmidsToEnrich.join(','),
-      },
-      { signal: ctx.signal },
-    );
-    const briefSummaries = await extractBriefSummaries(summaryResult);
-    const summaryMap = new Map(briefSummaries.map((bs) => [bs.pmid, bs]));
-
-    const articles = pmidsToEnrich.map((pmid) => {
-      const details = summaryMap.get(pmid);
+    // Enrich the window with ESummary. When a fallback answered because NCBI is
+    // down, eSummary hits the same host and may also fail — degrade to bare PMIDs
+    // (the article metadata fields are all optional) rather than failing the whole
+    // request, so the chain's resilience survives the enrichment step.
+    try {
+      const summaryResult = await ncbi.eSummary(
+        { db: 'pubmed', id: window.join(',') },
+        { signal: ctx.signal },
+      );
+      const briefSummaries = await extractBriefSummaries(summaryResult);
+      const summaryMap = new Map(briefSummaries.map((bs) => [bs.pmid, bs]));
+      const articles = window.map((pmid) => {
+        const details = summaryMap.get(pmid);
+        return {
+          pmid,
+          title: details?.title,
+          authors: details?.authors,
+          source: details?.source,
+          pubDate: details?.pubDate,
+        };
+      });
+      if (notices.length > 0) ctx.enrich.notice(notices.join(' '));
       return {
-        pmid,
-        title: details?.title,
-        authors: details?.authors,
-        source: details?.source,
-        pubDate: details?.pubDate,
+        sourcePmid: input.pmid,
+        relationship: input.relationship,
+        offset: input.offset,
+        articles,
       };
-    });
-
-    return { sourcePmid: input.pmid, relationship: input.relationship, articles };
+    } catch (err) {
+      if (ctx.signal.aborted) throw err;
+      ctx.log.warning('ESummary enrichment failed; returning related PMIDs without metadata', {
+        err: describeError(err),
+      });
+      notices.push(
+        'Article metadata is temporarily unavailable (NCBI eSummary did not respond); returning related PMIDs only. Retry for full metadata, or use pubmed_fetch_articles.',
+      );
+      ctx.enrich.notice(notices.join(' '));
+      return {
+        sourcePmid: input.pmid,
+        relationship: input.relationship,
+        offset: input.offset,
+        articles: window.map((pmid) => ({ pmid })),
+      };
+    }
   },
 
   format: (result) => {
     const lines = [
       `# Related Articles for PMID ${result.sourcePmid}`,
       `**Relationship:** ${result.relationship}`,
+      `**Returned:** ${result.articles.length} | **Offset:** ${result.offset}`,
     ];
     if (result.articles.length === 0) {
       lines.push('No related articles found.');

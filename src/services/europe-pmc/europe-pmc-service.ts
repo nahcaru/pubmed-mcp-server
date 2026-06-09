@@ -31,6 +31,9 @@ import { EuropePmcApiClient } from './api-client.js';
 import { EuropePmcRequestQueue } from './request-queue.js';
 import type {
   EuropePmcFullTextResult,
+  EuropePmcLinksResponse,
+  EuropePmcRelatedRecord,
+  EuropePmcRelatedResult,
   EuropePmcSearchHit,
   EuropePmcSearchParams,
   EuropePmcSearchResponse,
@@ -212,6 +215,105 @@ export class EuropePmcService {
       return { kind: 'not-available', reason: outcome.reason };
     }
     return { kind: 'found', xml: outcome.xml, epmcId, source };
+  }
+
+  /**
+   * Fetch articles that cite the given PubMed article from Europe PMC.
+   * Endpoint: GET /MED/{pmid}/citations?page=N&pageSize=N&format=json
+   * Returns only records with a PMID; others are silently dropped.
+   *
+   * @param pmid  Source PubMed ID
+   * @param pageSize  Number of records to request per page (max 1000 per EPMC)
+   * @param page  1-based page number
+   * @param signal  Optional AbortSignal
+   */
+  citations(
+    pmid: string,
+    pageSize: number,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<EuropePmcRelatedResult> {
+    return this.fetchRelatedLinks(
+      () => this.client.citations(pmid, pageSize, page, signal),
+      'citations',
+      pmid,
+      (parsed) => ensureArray<EuropePmcRelatedRecord>(parsed.citationList?.citation),
+      signal,
+    );
+  }
+
+  /**
+   * Fetch articles referenced by the given PubMed article from Europe PMC.
+   * Endpoint: GET /MED/{pmid}/references?page=N&pageSize=N&format=json
+   * Returns only records with a PMID; others are silently dropped.
+   *
+   * @param pmid  Source PubMed ID
+   * @param pageSize  Number of records to request per page
+   * @param page  1-based page number
+   * @param signal  Optional AbortSignal
+   */
+  references(
+    pmid: string,
+    pageSize: number,
+    page: number,
+    signal?: AbortSignal,
+  ): Promise<EuropePmcRelatedResult> {
+    return this.fetchRelatedLinks(
+      () => this.client.references(pmid, pageSize, page, signal),
+      'references',
+      pmid,
+      (parsed) => ensureArray<EuropePmcRelatedRecord>(parsed.referenceList?.reference),
+      signal,
+    );
+  }
+
+  /**
+   * Shared logic for citations() and references(): fetch, parse, extract PMIDs.
+   * Drops records with no PMID — never mints fake IDs.
+   */
+  private async fetchRelatedLinks(
+    fetch: () => Promise<string>,
+    kind: string,
+    pmid: string,
+    extractRecords: (parsed: EuropePmcLinksResponse) => EuropePmcRelatedRecord[],
+    signal?: AbortSignal,
+  ): Promise<EuropePmcRelatedResult> {
+    const text = await this.queue.enqueue(
+      () => this.withRetry(fetch, `${kind}(${pmid})`, signal),
+      `${kind}(${pmid})`,
+      signal,
+    );
+
+    let parsed: EuropePmcLinksResponse;
+    try {
+      parsed = JSON.parse(text) as EuropePmcLinksResponse;
+    } catch (error: unknown) {
+      throw serializationError(
+        `Failed to parse Europe PMC ${kind} JSON response.`,
+        {
+          reason: 'europepmc_invalid_response',
+          responseSnippet: text.substring(0, 200),
+          ...recoveryFor('europepmc_invalid_response'),
+        },
+        { cause: error },
+      );
+    }
+
+    const records = extractRecords(parsed);
+    const pmids: string[] = [];
+    for (const rec of records) {
+      // EPMC citation/reference records carry no `pmid` field: for a MED-source
+      // record the `id` IS the PubMed ID. Non-MED records (PPR/PMC/PAT/AGR) have
+      // no PubMed PMID and are dropped. A `pmid` field is honored if ever present.
+      const candidate = rec.pmid ?? (rec.source === 'MED' ? rec.id : undefined);
+      const p = candidate?.trim();
+      if (p && /^\d+$/.test(p)) pmids.push(p);
+    }
+
+    return {
+      pmids,
+      totalCount: parsed.hitCount ?? records.length,
+    };
   }
 
   /**

@@ -1,5 +1,6 @@
 /**
- * @fileoverview Tests for the find-related tool.
+ * @fileoverview Tests for the find-related tool — offset pagination (#36) and
+ * multi-source provider fallback (#63).
  * @module tests/mcp-server/tools/definitions/find-related.tool.test
  */
 
@@ -10,14 +11,49 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockELink = vi.fn();
 const mockESummary = vi.fn();
 const mockExtractBriefSummaries = vi.fn(() => Promise.resolve([]));
+const mockEpmcCitations = vi.fn();
+const mockEpmcReferences = vi.fn();
+const mockOaSimilar = vi.fn();
+const mockOaCitedBy = vi.fn();
+const mockOaReferences = vi.fn();
+
 vi.mock('@/services/ncbi/ncbi-service.js', () => ({
   getNcbiService: () => ({ eLink: mockELink, eSummary: mockESummary }),
 }));
 vi.mock('@/services/ncbi/parsing/esummary-parser.js', () => ({
   extractBriefSummaries: mockExtractBriefSummaries,
 }));
+vi.mock('@/services/europe-pmc/europe-pmc-service.js', () => ({
+  getEuropePmcService: () => ({
+    citations: mockEpmcCitations,
+    references: mockEpmcReferences,
+  }),
+}));
+vi.mock('@/services/openalex/openalex-service.js', () => ({
+  getOpenAlexServiceOptional: () => ({
+    similar: mockOaSimilar,
+    citedBy: mockOaCitedBy,
+    references: mockOaReferences,
+  }),
+}));
 
 const { findRelatedTool } = await import('@/mcp-server/tools/definitions/find-related.tool.js');
+
+/** Build a minimal NCBI eLink response with the given PMIDs. */
+function eLinkResponse(pmids: string[], linkName = 'pubmed_pubmed') {
+  return {
+    eLinkResult: [
+      {
+        LinkSet: {
+          LinkSetDb: {
+            LinkName: linkName,
+            Link: pmids.map((id) => ({ Id: id })),
+          },
+        },
+      },
+    ],
+  };
+}
 
 describe('findRelatedTool', () => {
   beforeEach(() => {
@@ -25,13 +61,21 @@ describe('findRelatedTool', () => {
     mockESummary.mockReset();
     mockExtractBriefSummaries.mockReset();
     mockExtractBriefSummaries.mockResolvedValue([]);
+    mockEpmcCitations.mockReset();
+    mockEpmcReferences.mockReset();
+    mockOaSimilar.mockReset();
+    mockOaCitedBy.mockReset();
+    mockOaReferences.mockReset();
   });
+
+  // ── Input schema ─────────────────────────────────────────────────────────
 
   it('validates input with defaults', () => {
     const input = findRelatedTool.input.parse({ pmid: '12345' });
     expect(input.pmid).toBe('12345');
     expect(input.relationship).toBe('similar');
     expect(input.maxResults).toBe(10);
+    expect(input.offset).toBe(0);
   });
 
   it('rejects non-numeric PMIDs', () => {
@@ -47,10 +91,219 @@ describe('findRelatedTool', () => {
     expect(message).toContain('13054692');
   });
 
-  it('returns empty without notice for valid source with no related articles', async () => {
-    mockELink.mockResolvedValue({
-      eLinkResult: [{ LinkSet: {} }],
+  // ── Offset pagination (#36) ────────────────────────────────────────────────
+
+  it('offset=0 returns first window of PMIDs', async () => {
+    const pmids = ['101', '102', '103', '104', '105'];
+    mockELink.mockResolvedValue(eLinkResponse(pmids));
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', maxResults: 2, offset: 0 });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(result.offset).toBe(0);
+    expect(result.articles.map((a) => a.pmid)).toEqual(['101', '102']);
+  });
+
+  it('offset=2 returns different, non-overlapping window from offset=0', async () => {
+    const pmids = ['101', '102', '103', '104', '105'];
+    mockELink.mockResolvedValue(eLinkResponse(pmids));
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([]);
+
+    // offset=0 run
+    const ctx0 = createMockContext();
+    const input0 = findRelatedTool.input.parse({ pmid: '12345', maxResults: 2, offset: 0 });
+    const result0 = await findRelatedTool.handler(input0, ctx0);
+
+    // offset=2 run
+    mockELink.mockResolvedValue(eLinkResponse(pmids));
+    const ctx2 = createMockContext();
+    const input2 = findRelatedTool.input.parse({ pmid: '12345', maxResults: 2, offset: 2 });
+    const result2 = await findRelatedTool.handler(input2, ctx2);
+
+    expect(result0.articles.map((a) => a.pmid)).toEqual(['101', '102']);
+    expect(result2.articles.map((a) => a.pmid)).toEqual(['103', '104']);
+    // No overlap between the two windows
+    const set0 = new Set(result0.articles.map((a) => a.pmid));
+    for (const a of result2.articles) expect(set0.has(a.pmid)).toBe(false);
+  });
+
+  it('emits overshoot notice when offset >= totalFound on non-empty set', async () => {
+    const pmids = ['101', '102', '103'];
+    mockELink.mockResolvedValue(eLinkResponse(pmids));
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([]);
+
+    const ctx = createMockContext();
+    // offset=10, totalFound=3 → overshoot
+    const input = findRelatedTool.input.parse({ pmid: '12345', maxResults: 10, offset: 10 });
+    await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).notice).toContain('Offset 10 exceeds totalFound');
+    expect(getEnrichment(ctx).notice).toContain('3');
+  });
+
+  it('echoes offset in the output schema', async () => {
+    mockELink.mockResolvedValue(eLinkResponse(['101', '102']));
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', maxResults: 5, offset: 3 });
+    const result = await findRelatedTool.handler(input, ctx);
+    expect(result.offset).toBe(3);
+  });
+
+  it('format() header includes "Returned: N | Offset: Z"', () => {
+    const blocks = findRelatedTool.format!({
+      sourcePmid: '12345',
+      relationship: 'similar',
+      offset: 5,
+      articles: [{ pmid: '111', title: 'A', authors: 'B', source: 'C', pubDate: '2024' }],
     });
+    const text = blocks[0]?.text ?? '';
+    expect(text).toContain('**Returned:** 1');
+    expect(text).toContain('**Offset:** 5');
+    expect(text).toContain('**Relationship:** similar');
+  });
+
+  // ── Provider fallback (#63) ────────────────────────────────────────────────
+
+  it('NCBI success: enrichment.source is "ncbi", no fallback notice', async () => {
+    mockELink.mockResolvedValue(eLinkResponse(['111', '222']));
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([
+      { pmid: '111', title: 'Art 1' },
+      { pmid: '222', title: 'Art 2' },
+    ]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'cited_by' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).source).toBe('ncbi');
+    // No fallback notice (notice may still be set for other reasons, but not fallback)
+    expect(getEnrichment(ctx).notice).toBeUndefined();
+    expect(result.articles.length).toBe(2);
+  });
+
+  it('NCBI throws → EPMC serves cited_by: source is "europepmc", notice present', async () => {
+    mockELink.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+    mockEpmcCitations.mockResolvedValue({ pmids: ['333', '444'], totalCount: 50 });
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([
+      { pmid: '333', title: 'EPMC Art 1' },
+      { pmid: '444', title: 'EPMC Art 2' },
+    ]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'cited_by' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).source).toBe('europepmc');
+    expect(getEnrichment(ctx).notice).toBeDefined();
+    expect(getEnrichment(ctx).notice).toContain('Europe PMC');
+    expect(getEnrichment(ctx).totalFound).toBe(50);
+    expect(result.articles[0]?.pmid).toBe('333');
+  });
+
+  it('NCBI throws for similar → EPMC skipped → OpenAlex serves: source is "openalex", notice present', async () => {
+    mockELink.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+    // EPMC is not called for similar (epmcSupports returns false)
+    mockOaSimilar.mockResolvedValue({ pmids: ['555', '666'], totalCount: 10 });
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([
+      { pmid: '555', title: 'OA Art 1' },
+      { pmid: '666', title: 'OA Art 2' },
+    ]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'similar' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).source).toBe('openalex');
+    expect(getEnrichment(ctx).notice).toBeDefined();
+    expect(getEnrichment(ctx).notice).toContain('OpenAlex');
+    expect(result.articles[0]?.pmid).toBe('555');
+    // EPMC should NOT have been called for similar
+    expect(mockEpmcCitations).not.toHaveBeenCalled();
+    expect(mockEpmcReferences).not.toHaveBeenCalled();
+  });
+
+  it('NCBI throws, EPMC throws → OpenAlex serves: source is "openalex"', async () => {
+    mockELink.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+    mockEpmcCitations.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'EPMC down'),
+    );
+    mockOaCitedBy.mockResolvedValue({ pmids: ['777'], totalCount: 5 });
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([{ pmid: '777', title: 'OA Art' }]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'cited_by' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).source).toBe('openalex');
+    expect(result.articles[0]?.pmid).toBe('777');
+  });
+
+  it('NCBI throws, EPMC returns empty → OpenAlex serves (an empty fallback is not "served")', async () => {
+    mockELink.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+    mockEpmcCitations.mockResolvedValue({ pmids: [], totalCount: 0 });
+    mockOaCitedBy.mockResolvedValue({ pmids: ['777'], totalCount: 9 });
+    mockESummary.mockResolvedValue({ eSummaryResult: {} });
+    mockExtractBriefSummaries.mockResolvedValue([{ pmid: '777', title: 'OA Art' }]);
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'cited_by' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).source).toBe('openalex');
+    expect(result.articles[0]?.pmid).toBe('777');
+  });
+
+  it('all providers fail: returns empty + all-fail notice', async () => {
+    mockELink.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+    mockEpmcCitations.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'EPMC down'),
+    );
+    mockOaCitedBy.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'OA down'));
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'cited_by' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(result.articles).toEqual([]);
+    expect(getEnrichment(ctx).notice).toBeDefined();
+    expect(getEnrichment(ctx).notice).toContain('All providers failed');
+  });
+
+  it('returns bare PMIDs + a notice when a fallback serves but eSummary enrichment fails', async () => {
+    // NCBI eLink is down → EPMC serves the PMIDs, but the window-enrichment
+    // eSummary (same NCBI host) also fails → degrade to bare PMIDs rather than
+    // throwing, so the chain's resilience survives the enrichment step.
+    mockELink.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+    mockEpmcCitations.mockResolvedValue({ pmids: ['333', '444'], totalCount: 50 });
+    mockESummary.mockRejectedValue(new McpError(JsonRpcErrorCode.ServiceUnavailable, 'NCBI down'));
+
+    const ctx = createMockContext();
+    const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'cited_by' });
+    const result = await findRelatedTool.handler(input, ctx);
+
+    expect(getEnrichment(ctx).source).toBe('europepmc');
+    expect(result.articles).toEqual([{ pmid: '333' }, { pmid: '444' }]);
+    // Both the provenance notice and the degradation notice survive (consolidated).
+    expect(getEnrichment(ctx).notice).toContain('Europe PMC');
+    expect(getEnrichment(ctx).notice).toContain('PMIDs only');
+  });
+
+  // ── Existing behavior preserved ───────────────────────────────────────────
+
+  it('returns empty without notice for valid source with no related articles', async () => {
+    mockELink.mockResolvedValue({ eLinkResult: [{ LinkSet: {} }] });
     mockESummary.mockResolvedValue({ eSummaryResult: {} });
     mockExtractBriefSummaries.mockResolvedValue([
       { pmid: '12345', title: 'Existing article with no related items' },
@@ -67,9 +320,7 @@ describe('findRelatedTool', () => {
 
   describe('ELink <ERROR> payload', () => {
     it('disambiguates an invalid source PMID via ESummary and emits a not-found notice', async () => {
-      mockELink.mockResolvedValue({
-        eLinkResult: [{ ERROR: 'Invalid PMID' }],
-      });
+      mockELink.mockResolvedValue({ eLinkResult: [{ ERROR: 'Invalid PMID' }] });
       mockESummary.mockResolvedValue({ eSummaryResult: {} });
       mockExtractBriefSummaries.mockResolvedValue([]);
 
@@ -84,9 +335,7 @@ describe('findRelatedTool', () => {
     });
 
     it('returns empty without notice when ELink ERROR fires for a valid PMID with no related items', async () => {
-      mockELink.mockResolvedValue({
-        eLinkResult: [{ ERROR: 'Empty result - nothing to do' }],
-      });
+      mockELink.mockResolvedValue({ eLinkResult: [{ ERROR: 'Empty result - nothing to do' }] });
       mockESummary.mockResolvedValue({ eSummaryResult: {} });
       mockExtractBriefSummaries.mockResolvedValue([
         { pmid: '12345', title: 'Valid source with no related items' },
@@ -153,10 +402,7 @@ describe('findRelatedTool', () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(mockESummary).toHaveBeenCalledWith(
-      {
-        db: 'pubmed',
-        id: '222,111',
-      },
+      { db: 'pubmed', id: '222,111' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(getEnrichment(ctx).totalFound).toBe(2);
@@ -183,21 +429,14 @@ describe('findRelatedTool', () => {
       eLinkResult: [
         {
           LinkSet: {
-            LinkSetDb: {
-              LinkName: 'pubmed_pubmed_citedin',
-              Link: { Id: '222' },
-            },
+            LinkSetDb: { LinkName: 'pubmed_pubmed_citedin', Link: { Id: '222' } },
           },
         },
       ],
     });
     mockESummary.mockResolvedValue({ eSummaryResult: {} });
     mockExtractBriefSummaries.mockResolvedValue([
-      {
-        pmid: '222',
-        title: 'Citing Article',
-        authors: 'Taylor R',
-      },
+      { pmid: '222', title: 'Citing Article', authors: 'Taylor R' },
     ]);
 
     const ctx = createMockContext();
@@ -225,13 +464,14 @@ describe('findRelatedTool', () => {
   });
 
   it('uses the references linkname for reference lookups', async () => {
-    mockELink.mockResolvedValue({
-      eLinkResult: [{ LinkSet: {} }],
-    });
+    mockELink.mockResolvedValue({ eLinkResult: [{ LinkSet: {} }] });
     mockESummary.mockResolvedValue({ eSummaryResult: {} });
     mockExtractBriefSummaries.mockResolvedValue([
       { pmid: '12345', title: 'Source', pmcId: 'PMC9999' },
     ]);
+    // Valid source, empty NCBI refs → the references fallback runs; keep both empty.
+    mockEpmcReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
+    mockOaReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
 
     const ctx = createMockContext();
     const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'references' });
@@ -251,34 +491,79 @@ describe('findRelatedTool', () => {
     expect(getEnrichment(ctx).totalFound).toBe(0);
   });
 
-  describe('references notice for non-PMC sources (issue #42)', () => {
-    it('emits a PMC-indexing hint when the source has no PMCID', async () => {
+  describe('references coverage for non-PMC sources (issues #42, #63)', () => {
+    it('serves references from EPMC when NCBI has none (non-PMC source, #63 coverage)', async () => {
+      mockELink.mockResolvedValue({ eLinkResult: [{ LinkSet: {} }] });
+      mockESummary.mockResolvedValue({ eSummaryResult: {} });
+      // 1st extract = source disambiguation; 2nd = window enrichment.
+      mockExtractBriefSummaries
+        .mockResolvedValueOnce([{ pmid: '37952131', title: 'Non-PMC source' }])
+        .mockResolvedValueOnce([
+          { pmid: '888', title: 'Ref A' },
+          { pmid: '999', title: 'Ref B' },
+        ]);
+      mockEpmcReferences.mockResolvedValue({ pmids: ['888', '999'], totalCount: 149 });
+
+      const ctx = createMockContext();
+      const input = findRelatedTool.input.parse({ pmid: '37952131', relationship: 'references' });
+      const result = await findRelatedTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).source).toBe('europepmc');
+      expect(getEnrichment(ctx).totalFound).toBe(149);
+      expect(getEnrichment(ctx).notice).toContain('Europe PMC');
+      expect(result.articles.map((a) => a.pmid)).toEqual(['888', '999']);
+      // EPMC served first — OpenAlex is not consulted.
+      expect(mockOaReferences).not.toHaveBeenCalled();
+    });
+
+    it('serves references from OpenAlex when NCBI and EPMC both have none', async () => {
+      mockELink.mockResolvedValue({ eLinkResult: [{ LinkSet: {} }] });
+      mockESummary.mockResolvedValue({ eSummaryResult: {} });
+      mockExtractBriefSummaries
+        .mockResolvedValueOnce([{ pmid: '37952131', title: 'Non-PMC source' }])
+        .mockResolvedValueOnce([{ pmid: '890', title: 'Ref X' }]);
+      mockEpmcReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
+      mockOaReferences.mockResolvedValue({ pmids: ['890'], totalCount: 150 });
+
+      const ctx = createMockContext();
+      const input = findRelatedTool.input.parse({ pmid: '37952131', relationship: 'references' });
+      const result = await findRelatedTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).source).toBe('openalex');
+      expect(getEnrichment(ctx).notice).toContain('OpenAlex');
+      expect(result.articles[0]?.pmid).toBe('890');
+    });
+
+    it('notices when references are unavailable everywhere (non-PMC source)', async () => {
       mockELink.mockResolvedValue({ eLinkResult: [{ LinkSet: {} }] });
       mockESummary.mockResolvedValue({ eSummaryResult: {} });
       mockExtractBriefSummaries.mockResolvedValue([
         { pmid: '37952131', title: 'Non-PMC source' /* no pmcId */ },
       ]);
+      mockEpmcReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
+      mockOaReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
 
       const ctx = createMockContext();
-      const input = findRelatedTool.input.parse({
-        pmid: '37952131',
-        relationship: 'references',
-      });
+      const input = findRelatedTool.input.parse({ pmid: '37952131', relationship: 'references' });
       await findRelatedTool.handler(input, ctx);
 
+      // EPMC + OpenAlex were both consulted before giving up.
+      expect(mockEpmcReferences).toHaveBeenCalled();
+      expect(mockOaReferences).toHaveBeenCalled();
       expect(getEnrichment(ctx).totalFound).toBe(0);
-      expect(getEnrichment(ctx).notice).toBeDefined();
-      expect(getEnrichment(ctx).notice).toContain('PMC');
       expect(getEnrichment(ctx).notice).toContain('37952131');
+      expect(getEnrichment(ctx).notice).toContain('OpenAlex');
       expect(getEnrichment(ctx).notice).toContain('pubmed_fetch_articles');
     });
 
-    it('emits a PMC-no-refs hint when the source has a PMCID but no references', async () => {
+    it('notices with the PMCID when a PMC source has no references anywhere', async () => {
       mockELink.mockResolvedValue({ eLinkResult: [{ LinkSet: {} }] });
       mockESummary.mockResolvedValue({ eSummaryResult: {} });
       mockExtractBriefSummaries.mockResolvedValue([
         { pmid: '12345', title: 'PMC source', pmcId: 'PMC12345' },
       ]);
+      mockEpmcReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
+      mockOaReferences.mockResolvedValue({ pmids: [], totalCount: 0 });
 
       const ctx = createMockContext();
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'references' });
@@ -335,6 +620,7 @@ describe('findRelatedTool', () => {
       const blocks = findRelatedTool.format!({
         sourcePmid: '37952131',
         relationship: 'references',
+        offset: 0,
         articles: [],
       });
       const text = blocks[0]?.text ?? '';
@@ -347,6 +633,7 @@ describe('findRelatedTool', () => {
     const blocks = findRelatedTool.format!({
       sourcePmid: '12345',
       relationship: 'similar',
+      offset: 0,
       articles: [
         {
           pmid: '111',
@@ -368,6 +655,7 @@ describe('findRelatedTool', () => {
     const blocks = findRelatedTool.format!({
       sourcePmid: '12345',
       relationship: 'cited_by',
+      offset: 0,
       articles: [],
     });
     expect(blocks[0]?.text).toContain('No related articles');

@@ -328,6 +328,149 @@ describe('EuropePmcService.parseFullTextXml', () => {
   });
 });
 
+describe('EuropePmcService.citations', () => {
+  beforeEach(() => {
+    mockFetchWithTimeout.mockReset();
+  });
+
+  it('extracts PMIDs from a citations response (MED id is the PMID)', async () => {
+    // Live EPMC shape: records carry `id` + `source`, NOT a `pmid` field; for a
+    // MED-source record the `id` IS the PubMed ID. A PPR (preprint) is dropped.
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        hitCount: 3,
+        citationList: {
+          citation: [
+            { id: '10001', source: 'MED', citationType: 'journal article', title: 'Citing A' },
+            { id: '10002', source: 'MED', title: 'Citing B' },
+            { id: 'PPR123', source: 'PPR', title: 'Preprint, no PubMed PMID' },
+          ],
+        },
+      }),
+    );
+
+    const service = makeService();
+    const result = await service.citations('31295471', 10, 1);
+
+    expect(result.pmids).toEqual(['10001', '10002']);
+    expect(result.totalCount).toBe(3);
+  });
+
+  it('drops records with no PMID (non-MED sources)', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        hitCount: 2,
+        citationList: {
+          citation: [
+            { id: 'PAT1', source: 'PAT' },
+            { id: 'AGR1', source: 'AGR' },
+          ],
+        },
+      }),
+    );
+    const service = makeService();
+    const result = await service.citations('12345', 10, 1);
+    expect(result.pmids).toEqual([]);
+    expect(result.totalCount).toBe(2);
+  });
+
+  it('returns empty result for sparse/empty payload', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({ hitCount: 0, citationList: { citation: [] } }),
+    );
+    const service = makeService();
+    const result = await service.citations('12345', 10, 1);
+    expect(result.pmids).toEqual([]);
+    expect(result.totalCount).toBe(0);
+  });
+
+  it('handles missing citationList gracefully', async () => {
+    mockFetchWithTimeout.mockResolvedValue(jsonResponse({ hitCount: 0 }));
+    const service = makeService();
+    const result = await service.citations('12345', 10, 1);
+    expect(result.pmids).toEqual([]);
+  });
+
+  it('throws SerializationError on non-JSON response', async () => {
+    mockFetchWithTimeout.mockResolvedValue(new Response('<html>error</html>', { status: 200 }));
+    const service = makeService();
+    await expect(service.citations('12345', 10, 1)).rejects.toMatchObject({
+      data: { reason: 'europepmc_invalid_response' },
+    });
+  });
+
+  it('throws ServiceUnavailable on 5xx', async () => {
+    mockFetchWithTimeout.mockResolvedValue(new Response('down', { status: 503 }));
+    const service = makeService();
+    await expect(service.citations('12345', 10, 1)).rejects.toThrow(/503/);
+  });
+});
+
+describe('EuropePmcService.references', () => {
+  beforeEach(() => {
+    mockFetchWithTimeout.mockReset();
+  });
+
+  it('extracts PMIDs from a references response (MED id is the PMID)', async () => {
+    // Live EPMC shape: `id` + `source`, no `pmid` field; MED `id` is the PubMed ID.
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        hitCount: 2,
+        referenceList: {
+          reference: [
+            { id: '20001', source: 'MED', citationType: 'JOURNAL ARTICLE', title: 'Ref A' },
+            { id: '20002', source: 'MED', title: 'Ref B' },
+          ],
+        },
+      }),
+    );
+
+    const service = makeService();
+    const result = await service.references('31295471', 10, 1);
+
+    expect(result.pmids).toEqual(['20001', '20002']);
+    expect(result.totalCount).toBe(2);
+  });
+
+  it('drops references without a PubMed PMID (non-MED sources)', async () => {
+    mockFetchWithTimeout.mockResolvedValue(
+      jsonResponse({
+        hitCount: 3,
+        referenceList: {
+          reference: [
+            { id: '30001', source: 'MED' },
+            { id: 'PAT1', source: 'PAT' /* no PubMed PMID */ },
+            { id: '30003', source: 'MED' },
+          ],
+        },
+      }),
+    );
+    const service = makeService();
+    const result = await service.references('12345', 10, 1);
+    expect(result.pmids).toEqual(['30001', '30003']);
+    expect(result.totalCount).toBe(3);
+  });
+
+  it('handles sparse/empty payload', async () => {
+    mockFetchWithTimeout.mockResolvedValue(jsonResponse({}));
+    const service = makeService();
+    const result = await service.references('12345', 10, 1);
+    expect(result.pmids).toEqual([]);
+    expect(result.totalCount).toBe(0);
+  });
+
+  it('uses the correct /MED/{pmid}/references URL', async () => {
+    mockFetchWithTimeout.mockResolvedValue(jsonResponse({ hitCount: 0, referenceList: {} }));
+    const service = makeService();
+    await service.references('31295471', 10, 1);
+    const url = mockFetchWithTimeout.mock.calls[0]?.[0] as string;
+    expect(url).toContain('/MED/31295471/references');
+    expect(url).toContain('pageSize=10');
+    expect(url).toContain('page=1');
+    expect(url).toContain('format=json');
+  });
+});
+
 describe('initEuropePmcService / getEuropePmcService', () => {
   afterEach(() => {
     vi.unstubAllEnvs();

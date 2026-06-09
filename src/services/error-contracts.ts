@@ -77,6 +77,29 @@ export const UNPAYWALL_SERVICE_ERRORS = [
 ] as const;
 
 /**
+ * Failure modes the OpenAlex service layer can surface. Tools that consume
+ * `getOpenAlexService()` / `getOpenAlexServiceOptional()` should spread
+ * these into their `errors[]`.
+ */
+export const OPENALEX_SERVICE_ERRORS = [
+  {
+    reason: 'openalex_unreachable',
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    when: 'OpenAlex was unreachable after all retry attempts.',
+    recovery:
+      'Retry after a brief delay; OpenAlex was unreachable. NCBI and Europe PMC remain available.',
+    retryable: true,
+  },
+  {
+    reason: 'openalex_invalid_response',
+    code: JsonRpcErrorCode.SerializationError,
+    when: 'OpenAlex returned a body that could not be parsed (invalid JSON).',
+    recovery: 'Retry the request; OpenAlex returned a malformed response that could not be parsed.',
+    retryable: true,
+  },
+] as const;
+
+/**
  * Failure modes the Europe PMC service layer can surface. Tools that consume
  * `getEuropePmcService()` should spread these into their `errors[]`.
  */
@@ -115,12 +138,16 @@ export const EUROPEPMC_SERVICE_ERRORS = [
 export type ServiceErrorReason =
   | (typeof NCBI_SERVICE_ERRORS)[number]['reason']
   | (typeof UNPAYWALL_SERVICE_ERRORS)[number]['reason']
-  | (typeof EUROPEPMC_SERVICE_ERRORS)[number]['reason'];
+  | (typeof EUROPEPMC_SERVICE_ERRORS)[number]['reason']
+  | (typeof OPENALEX_SERVICE_ERRORS)[number]['reason'];
 
 const REASON_TO_RECOVERY = new Map<ServiceErrorReason, string>(
-  [...NCBI_SERVICE_ERRORS, ...UNPAYWALL_SERVICE_ERRORS, ...EUROPEPMC_SERVICE_ERRORS].map(
-    (entry) => [entry.reason, entry.recovery],
-  ),
+  [
+    ...NCBI_SERVICE_ERRORS,
+    ...UNPAYWALL_SERVICE_ERRORS,
+    ...EUROPEPMC_SERVICE_ERRORS,
+    ...OPENALEX_SERVICE_ERRORS,
+  ].map((entry) => [entry.reason, entry.recovery]),
 );
 
 /**

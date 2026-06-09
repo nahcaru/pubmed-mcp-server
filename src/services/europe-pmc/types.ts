@@ -127,3 +127,33 @@ export interface EuropePmcSearchParams {
 export type EuropePmcFullTextResult =
   | { kind: 'found'; xml: string; epmcId: string; source: EuropePmcSource }
   | { kind: 'not-available'; reason: string };
+
+/**
+ * Single record from the citations or references endpoint.
+ * Only fields the server uses are typed; `pmid` is the key field.
+ */
+export interface EuropePmcRelatedRecord {
+  authorString?: string;
+  doi?: string;
+  id: string;
+  journalTitle?: string;
+  pmid?: string;
+  pubYear?: string;
+  source?: string;
+  title?: string;
+  [key: string]: unknown;
+}
+
+/** Top-level shape of a Europe PMC citations/references JSON response. */
+export interface EuropePmcLinksResponse {
+  citationList?: { citation?: EuropePmcRelatedRecord[] | EuropePmcRelatedRecord };
+  hitCount?: number;
+  nextPageUrl?: string;
+  referenceList?: { reference?: EuropePmcRelatedRecord[] | EuropePmcRelatedRecord };
+}
+
+/** Normalized result from citations() or references(). */
+export interface EuropePmcRelatedResult {
+  pmids: string[];
+  totalCount: number;
+}

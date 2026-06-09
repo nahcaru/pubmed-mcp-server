@@ -20,6 +20,7 @@ import { searchArticlesTool } from './mcp-server/tools/definitions/search-articl
 import { spellCheckTool } from './mcp-server/tools/definitions/spell-check.tool.js';
 import { initEuropePmcService } from './services/europe-pmc/europe-pmc-service.js';
 import { initNcbiService } from './services/ncbi/ncbi-service.js';
+import { initOpenAlexService } from './services/openalex/openalex-service.js';
 import { initUnpaywallService } from './services/unpaywall/unpaywall-service.js';
 
 const config = getServerConfig();
@@ -71,5 +72,6 @@ await createApp({
     initNcbiService();
     initUnpaywallService();
     initEuropePmcService();
+    initOpenAlexService();
   },
 });

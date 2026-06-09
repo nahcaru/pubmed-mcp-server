@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.0](changelog/2.9.x/2.9.0.md) — 2026-06-09
+
+find_related: offset pagination, multi-source provider fallback (NCBI → EuropePMC → OpenAlex); europepmc_search: date-sort advisory for PPR-only results
+
 ## [2.8.0](changelog/2.8.x/2.8.0.md) — 2026-06-08
 
 Vancouver citation style, full-text reference extraction fix, BibTeX MeSH keyword fix, empty-result notices
