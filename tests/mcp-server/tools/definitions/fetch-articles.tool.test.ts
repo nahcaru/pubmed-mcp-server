@@ -3,7 +3,7 @@
  * @module tests/mcp-server/tools/definitions/fetch-articles.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockEFetch = vi.fn();
@@ -61,6 +61,10 @@ describe('fetchArticlesTool', () => {
     expect(result.articles).toEqual([]);
     expect(result.totalReturned).toBe(0);
     expect(result.unavailablePmids).toEqual(['99999']);
+    // Empty-result recovery hint surfaced via ctx.enrich.notice → structuredContent + content[] (issue #58)
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.notice).toMatch(/no articles were returned/i);
+    expect(enrichment.notice).toContain('pubmed_search_articles');
   });
 
   it('throws when response is missing PubmedArticleSet with reason "invalid_efetch_response"', async () => {
@@ -120,6 +124,8 @@ describe('fetchArticlesTool', () => {
     expect(result.articles[0]?.pmid).toBe('12345');
     expect(result.articles[0]?.pubmedUrl).toContain('12345');
     expect(result.articles[0]?.pmcUrl).toContain('PMC999');
+    // notice is absent on a successful fetch (issue #58)
+    expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
   it('reports unavailable PMIDs', async () => {
@@ -454,17 +460,18 @@ describe('fetchArticlesTool', () => {
     });
   });
 
-  describe('format() empty-result guidance', () => {
-    it('adds a hint when totalReturned is zero', () => {
+  describe('format() empty result', () => {
+    it('renders the empty state; the recovery notice is enrichment, not format output', () => {
       const blocks = fetchArticlesTool.format!({
         articles: [],
         totalReturned: 0,
         unavailablePmids: ['999999999'],
       });
       const text = blocks[0]?.text ?? '';
+      expect(text).toContain('**Articles Returned:** 0');
       expect(text).toContain('**Unavailable PMIDs:** 999999999');
-      expect(text).toMatch(/no articles were returned/i);
-      expect(text).toContain('pubmed_search_articles');
+      // notice lives in enrichment (ctx.enrich.notice), not in format() text
+      expect(text).not.toMatch(/no articles were returned/i);
     });
   });
 });

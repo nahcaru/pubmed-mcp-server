@@ -144,6 +144,17 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
       .describe('PMIDs that returned no article data'),
   }),
 
+  // Recovery guidance when no articles are returned — agent-facing context, surfaced via
+  // ctx.enrich.notice() to both structuredContent and content[]; absent on success.
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Optional guidance when no articles were returned — points to discovery tools. Absent on successful fetches.',
+      ),
+  },
+
   async handler(input, ctx) {
     ctx.log.info('Executing pubmed_fetch', { pmidCount: input.pmids.length });
 
@@ -185,6 +196,11 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
       requested: input.pmids.length,
       returned: articles.length,
     });
+    if (articles.length === 0) {
+      ctx.enrich.notice(
+        'No articles were returned. These PMIDs may be invalid, unpublished, or withdrawn. Try pubmed_search_articles to discover valid PMIDs.',
+      );
+    }
     return {
       articles,
       totalReturned: articles.length,
@@ -196,11 +212,6 @@ export const fetchArticlesTool = tool('pubmed_fetch_articles', {
     const lines = [`## PubMed Articles`, `**Articles Returned:** ${result.totalReturned}`];
     if (result.unavailablePmids?.length) {
       lines.push(`**Unavailable PMIDs:** ${result.unavailablePmids.join(', ')}`);
-    }
-    if (result.totalReturned === 0) {
-      lines.push(
-        `\n> No articles were returned. These PMIDs may be invalid, unpublished, or withdrawn. Try \`pubmed_search_articles\` to discover valid PMIDs.`,
-      );
     }
     for (const a of result.articles) {
       lines.push(`\n### ${a.title ?? a.pmid ?? 'Unknown'}`);
