@@ -248,7 +248,12 @@ export class NcbiResponseHandler {
    * Parser configured for JATS mixed content (PMC full-text). `preserveOrder`
    * keeps document order so inline markup in `<p>`, `<abstract>`, `<title>`
    * doesn't collapse into reordered text. `trimValues: false` retains spacing
-   * between text nodes and adjacent inline children.
+   * between text nodes and adjacent inline children. `parseTagValue: false`
+   * keeps bibliographic tokens verbatim — page ranges like `4002.e26` and
+   * zero-padded pages would otherwise coerce to `Number` (→ `4.002e+29`, `123`);
+   * every value on this path is `String()`-ed downstream, so coercion is pure
+   * downside. Entity decoding is unaffected (it's governed by `processEntities`/
+   * `htmlEntities`), so page-range en-dashes still resolve. (#69)
    */
   private readonly orderedXmlParser: FastXmlParser;
 
@@ -265,7 +270,7 @@ export class NcbiResponseHandler {
       preserveOrder: true,
       ignoreAttributes: false,
       attributeNamePrefix: '@_',
-      parseTagValue: true,
+      parseTagValue: false,
       trimValues: false,
       processEntities: NCBI_PROCESS_ENTITIES_OPTIONS,
       htmlEntities: true,

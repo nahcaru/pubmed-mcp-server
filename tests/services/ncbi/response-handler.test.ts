@@ -68,6 +68,24 @@ describe('NcbiResponseHandler', () => {
       );
     });
 
+    it('keeps numeric-looking bibliographic tokens verbatim on the ordered parser path (regression #69)', () => {
+      const handler = createHandler();
+      // The ordered (PMC JATS) parser must not coerce page tokens: <lpage>
+      // 4002.e26 is a valid JS numeric literal that String()s back to
+      // 4.002e+29, and 0123 drops its leading zero \u2014 both are stringified
+      // downstream, so coercion is pure corruption. The regular parser still
+      // coerces (see the Count===42 test above); only the ordered path changes.
+      const xml = `<?xml version="1.0"?><pmc-articleset><article><back><ref-list><ref id="bib2"><element-citation><fpage>0123</fpage><lpage>4002.e26</lpage></element-citation></ref></ref-list></back></article></pmc-articleset>`;
+      const result = handler.parseAndHandleResponse<unknown[]>(xml, 'efetch', {
+        retmode: 'xml',
+        useOrderedParser: true,
+      });
+      const serialized = JSON.stringify(result);
+      expect(serialized).toContain('"4002.e26"');
+      expect(serialized).toContain('"0123"');
+      expect(serialized).not.toMatch(/e\+\d+/);
+    });
+
     it('throws on invalid XML', () => {
       const handler = createHandler();
       expect(() =>

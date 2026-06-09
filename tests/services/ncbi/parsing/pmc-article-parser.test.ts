@@ -238,6 +238,79 @@ describe('extractReferences', () => {
     expect(refs).toHaveLength(1);
     expect(refs[0]?.citation).toBe('Element only.');
   });
+
+  it('renders structured element-citation fields with separators, pages verbatim (regression #69)', () => {
+    // PMC12973387 (Elsevier deposit) ships <element-citation> only. Its child
+    // elements carry no punctuation, so the old flat textContent() ran every
+    // field together (DomanJ.L.…editorsCell18618…) and <lpage>4002.e26</lpage>
+    // coerced upstream to 4.002e+29. Authors must separate, fields must space,
+    // typed pub-ids must label, page tokens must survive verbatim.
+    const back = el('back', [
+      el('ref-list', [
+        el(
+          'ref',
+          [
+            el('label', [t('2')]),
+            el('element-citation', [
+              el(
+                'person-group',
+                [
+                  el('name', [el('surname', [t('Doman')]), el('given-names', [t('J.L.')])]),
+                  el('name', [el('surname', [t('Pandey')]), el('given-names', [t('S.')])]),
+                ],
+                { '@_person-group-type': 'author' },
+              ),
+              el('article-title', [t('Phage-assisted evolution yields compact prime editors')]),
+              el('source', [t('Cell')]),
+              el('volume', [t('186')]),
+              el('issue', [t('18')]),
+              el('year', [t('2023')]),
+              el('fpage', [t('3983')]),
+              el('lpage', [t('4002.e26')]),
+              el('pub-id', [t('37657419')], { '@_pub-id-type': 'pmid' }),
+              el('pub-id', [t('10.1016/j.cell.2023.07.039')], { '@_pub-id-type': 'doi' }),
+              el('pub-id', [t('PMC10482982')], { '@_pub-id-type': 'pmcid' }),
+            ]),
+          ],
+          { '@_id': 'bib2' },
+        ),
+      ]),
+    ]);
+
+    const refs = extractReferences(back);
+    expect(refs).toHaveLength(1);
+    expect(refs[0]?.id).toBe('bib2');
+    expect(refs[0]?.citation).toBe(
+      'Doman J.L., Pandey S. Phage-assisted evolution yields compact prime editors Cell 186 18 2023 3983 4002.e26 PMID 37657419 DOI 10.1016/j.cell.2023.07.039 PMCID PMC10482982',
+    );
+    // Acceptance invariants from the issue:
+    expect(refs[0]?.citation).not.toMatch(/e\+\d+/); // no scientific-notation page
+    expect(refs[0]?.citation).not.toContain('DomanJ.L.'); // authors not run together
+  });
+
+  it('renders element-citation collab + etal author forms (regression #69)', () => {
+    const back = el('back', [
+      el('ref-list', [
+        el(
+          'ref',
+          [
+            el('element-citation', [
+              el(
+                'person-group',
+                [el('collab', [t('The ENCODE Project Consortium')]), el('etal', [])],
+                { '@_person-group-type': 'author' },
+              ),
+              el('source', [t('Nature')]),
+              el('year', [t('2012')]),
+            ]),
+          ],
+          { '@_id': 'bib9' },
+        ),
+      ]),
+    ]);
+    const refs = extractReferences(back);
+    expect(refs[0]?.citation).toBe('The ENCODE Project Consortium, et al. Nature 2012');
+  });
 });
 
 describe('parsePmcArticle', () => {

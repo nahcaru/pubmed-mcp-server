@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.1](changelog/2.9.x/2.9.1.md) — 2026-06-09
+
+fix(fetch_fulltext): element-citation references now delimited; PMC page/bibliographic tokens preserved verbatim
+
 ## [2.9.0](changelog/2.9.x/2.9.0.md) — 2026-06-09
 
 find_related: offset pagination, multi-source provider fallback (NCBI → EuropePMC → OpenAlex); europepmc_search: date-sort advisory for PPR-only results

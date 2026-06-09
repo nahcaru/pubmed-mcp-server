@@ -253,9 +253,65 @@ function extractSection(sec: JatsNode): ParsedPmcSection | null {
 // ─── References ─────────────────────────────────────────────────────────────
 
 /**
- * Extract references from a `<back>` node. Prefers mixed-citation over
- * element-citation, descending into `<citation-alternatives>` when a ref carries
- * both forms there rather than as direct children of `<ref>`.
+ * `pub-id-type` → human label, so the trailing identifiers in a rendered
+ * `<element-citation>` read as `PMID 37657419` rather than a bare number run.
+ */
+const PUB_ID_LABELS: Readonly<Record<string, string>> = {
+  pmid: 'PMID',
+  doi: 'DOI',
+  pmcid: 'PMCID',
+};
+
+/** Render one `<person-group>` child — a `<name>`, `<collab>`, or `<etal>`. */
+function renderCitationName(node: JatsNode): string {
+  const tag = tagNameOf(node);
+  if (tag === 'name' || tag === 'string-name') {
+    const surname = textContent(findOne(node, 'surname'));
+    const given = textContent(findOne(node, 'given-names'));
+    return [surname, given].filter(Boolean).join(' ') || textContent(node);
+  }
+  if (tag === 'collab') return textContent(node);
+  if (tag === 'etal') return 'et al.';
+  return '';
+}
+
+/**
+ * Render a structured `<element-citation>` as a readable, delimited string.
+ * Its child elements carry no punctuation between them, so a flat
+ * `textContent()` runs every field together (`DomanJ.L.…Cell18618…`). Walk the
+ * direct children in document order, joining author names with `, ` and
+ * labeling typed `<pub-id>`s, so the output reads as a citation rather than a
+ * token run. (#69)
+ */
+function renderElementCitation(node: JatsNode): string {
+  const parts: string[] = [];
+  for (const child of childrenOf(node)) {
+    const tag = tagNameOf(child);
+    if (tag === 'person-group') {
+      const names = childrenOf(child).map(renderCitationName).filter(Boolean);
+      if (names.length > 0) parts.push(names.join(', '));
+    } else if (tag === 'pub-id') {
+      const value = textContent(child);
+      if (value) {
+        const label = PUB_ID_LABELS[attrOf(child, 'pub-id-type') ?? ''];
+        parts.push(label ? `${label} ${value}` : value);
+      }
+    } else {
+      // Element field (source, volume, year, fpage, …) or a bare text node;
+      // textContent renders both, and empty results drop out of the join.
+      const text = textContent(child);
+      if (text) parts.push(text);
+    }
+  }
+  return parts.join(' ');
+}
+
+/**
+ * Extract references from a `<back>` node. Prefers `<mixed-citation>` over
+ * `<element-citation>`, descending into `<citation-alternatives>` when a ref
+ * carries both forms there rather than as direct children of `<ref>`. Mixed
+ * citations are read verbatim; structured element citations are rendered
+ * field-by-field with separators (see `renderElementCitation`).
  */
 export function extractReferences(back: JatsNode | undefined): ParsedPmcReference[] {
   if (!back) return [];
@@ -269,10 +325,18 @@ export function extractReferences(back: JatsNode | undefined): ParsedPmcReferenc
     // <mixed-citation>). findOne matches direct children only, so resolve that
     // container first; refs with a direct citation node fall through to `ref`.
     const container = findOne(ref, 'citation-alternatives') ?? ref;
-    const citationNode =
-      findOne(container, 'mixed-citation') ?? findOne(container, 'element-citation');
-    if (!citationNode) continue;
-    const citation = textContent(citationNode);
+    const mixedCitation = findOne(container, 'mixed-citation');
+    const elementCitation = findOne(container, 'element-citation');
+
+    // <mixed-citation> carries punctuation in the text nodes between its
+    // elements, so textContent() reads correctly. <element-citation> children
+    // have no separators — render the structured fields explicitly. (#69)
+    let citation = '';
+    if (mixedCitation) {
+      citation = textContent(mixedCitation);
+    } else if (elementCitation) {
+      citation = renderElementCitation(elementCitation);
+    }
     if (!citation) continue;
 
     const id = attrOf(ref, 'id');
