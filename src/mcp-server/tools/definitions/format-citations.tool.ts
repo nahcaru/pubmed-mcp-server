@@ -1,6 +1,6 @@
 /**
  * @fileoverview PubMed citation tool — generates formatted citations (APA, MLA,
- * BibTeX, RIS) for one or more PubMed articles.
+ * BibTeX, RIS, Vancouver) for one or more PubMed articles.
  * @module src/mcp-server/tools/definitions/format-citations.tool
  */
 
@@ -17,11 +17,11 @@ import type { XmlPubmedArticle } from '@/services/ncbi/types.js';
 import { conceptMeta, EDAM_DATA_FORMATTING, SCHEMA_CREATIVE_WORK } from './_concepts.js';
 import { pmidStringSchema } from './_schemas.js';
 
-const CitationStyleEnum = z.enum(['apa', 'mla', 'bibtex', 'ris']);
+const CitationStyleEnum = z.enum(['apa', 'mla', 'bibtex', 'ris', 'vancouver']);
 
 export const formatCitationsTool = tool('pubmed_format_citations', {
   description:
-    'Get formatted citations for PubMed articles in one or more styles (apa, mla, bibtex, ris). Pass a single style as a string or multiple as an array.',
+    'Get formatted citations for PubMed articles in one or more styles (apa, mla, bibtex, ris, vancouver). Pass a single style as a string or multiple as an array.',
   annotations: { readOnlyHint: true, openWorldHint: true },
   _meta: conceptMeta([SCHEMA_CREATIVE_WORK, EDAM_DATA_FORMATTING]),
   sourceUrl:
@@ -33,15 +33,19 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
     pmids: z.array(pmidStringSchema).min(1).max(50).describe('PubMed IDs to cite'),
     format: z
       .union([
-        CitationStyleEnum.describe('Single citation style. One of: apa, mla, bibtex, ris.'),
+        CitationStyleEnum.describe(
+          'Single citation style. One of: apa, mla, bibtex, ris, vancouver.',
+        ),
         z
           .array(CitationStyleEnum)
           .min(1)
-          .describe('Multiple citation styles to generate. Each entry: apa, mla, bibtex, or ris.'),
+          .describe(
+            'Multiple citation styles to generate. Each entry: apa, mla, bibtex, ris, or vancouver.',
+          ),
       ])
       .default('apa')
       .describe(
-        'Citation format(s) to generate — single style as a string or multiple as an array. Allowed values: apa, mla, bibtex, ris.',
+        'Citation format(s) to generate — single style as a string or multiple as an array. Allowed values: apa, mla, bibtex, ris, vancouver.',
       ),
   }),
 
@@ -64,6 +68,17 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
       .optional()
       .describe('Requested PMIDs that did not return article metadata'),
   }),
+
+  // Recovery guidance when nothing could be formatted — agent-facing context, surfaced
+  // via ctx.enrich.notice() to both structuredContent and content[]; absent on success.
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Optional guidance when no citations were produced — points to discovery tools. Absent when at least one citation was produced.',
+      ),
+  },
 
   async handler(input, ctx) {
     const formats: CitationStyle[] = Array.isArray(input.format) ? input.format : [input.format];
@@ -89,6 +104,11 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
     const returnedPmids = new Set(citations.map((entry) => entry.pmid));
     const unavailablePmids = input.pmids.filter((pmid) => !returnedPmids.has(pmid));
 
+    if (citations.length === 0) {
+      ctx.enrich.notice(
+        'No articles were returned for the submitted PMIDs. They may be invalid, unpublished, or withdrawn. Try pubmed_search_articles to discover valid PMIDs, or pubmed_spell_check if these came from a noisy source.',
+      );
+    }
     return {
       citations,
       totalSubmitted: input.pmids.length,
@@ -104,11 +124,6 @@ export const formatCitationsTool = tool('pubmed_format_citations', {
     ];
     if (result.unavailablePmids?.length) {
       lines.push(`**Unavailable PMIDs:** ${result.unavailablePmids.join(', ')}`);
-    }
-    if (result.totalFormatted === 0) {
-      lines.push(
-        `\n> No articles were returned for the submitted PMIDs. They may be invalid, unpublished, or withdrawn. Try \`pubmed_search_articles\` to discover valid PMIDs, or \`pubmed_spell_check\` if these came from a noisy source.`,
-      );
     }
     for (const entry of result.citations) {
       lines.push(`\n## PMID ${entry.pmid}`);

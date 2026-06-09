@@ -1,6 +1,6 @@
 # pubmed-mcp-server - Directory Structure
 
-Generated on: 2026-06-02 14:56:10
+Generated on: 2026-06-09 00:29:33
 
 ```text
 pubmed-mcp-server/
@@ -29,6 +29,7 @@ pubmed-mcp-server/
 │   ├── 2.5.x/
 │   ├── 2.6.x/
 │   ├── 2.7.x/
+│   ├── 2.8.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md

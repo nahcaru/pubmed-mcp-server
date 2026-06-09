@@ -9,7 +9,7 @@
 
 
 
-[![Version](https://img.shields.io/badge/Version-2.7.11-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pubmed-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pubmed-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pubmed-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-2.8.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/pubmed-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/pubmed-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/pubmed-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -39,7 +39,7 @@
 | `pubmed_europepmc_search` | Search Europe PMC for preprints, patents, Agricola, and EPMC-only OA records that don't surface in PubMed. Cursor-based pagination. |
 | `pubmed_fetch_articles` | Fetch full article metadata by PMIDs — abstract, authors, journal, MeSH terms, grants |
 | `pubmed_fetch_fulltext` | Fetch full-text articles via a chain: NCBI PMC EFetch → Europe PMC `fullTextXML` → Unpaywall. Accepts PMIDs, PMCIDs, or DOIs. |
-| `pubmed_format_citations` | Generate formatted citations in APA 7th, MLA 9th, BibTeX, or RIS |
+| `pubmed_format_citations` | Generate formatted citations in APA 7th, MLA 9th, BibTeX, RIS, or Vancouver (ICMJE/NLM) |
 | `pubmed_find_related` | Find similar articles, citing articles, or references for a given PMID |
 | `pubmed_spell_check` | Spell-check biomedical queries using NCBI's ESpell service |
 | `pubmed_lookup_mesh` | Search and explore MeSH vocabulary — tree numbers, scope notes, entry terms |
@@ -106,7 +106,7 @@ Search Europe PMC (EBI/EMBL-EBI), a broader open-access biomedical corpus than P
 
 Generate formatted citations for articles.
 
-- Four citation styles: APA 7th, MLA 9th, BibTeX, RIS
+- Five citation styles: APA 7th, MLA 9th, BibTeX, RIS, Vancouver (ICMJE/NLM)
 - Request multiple styles per article in a single call
 - Hand-rolled formatters — zero external dependencies, fully Workers-compatible
 - Up to 50 articles per request
@@ -187,7 +187,7 @@ PubMed-specific:
 - Complete NCBI E-utilities integration (ESearch, EFetch, ESummary, ELink, ESpell, EInfo, ECitMatch) plus PMC ID Converter
 - Sequential request queue with configurable delay for NCBI rate limit compliance
 - NCBI-specific XML parser with `isArray` hints for PubMed's inconsistent XML structure
-- Hand-rolled citation formatters (APA, MLA, BibTeX, RIS) — zero deps, Workers-compatible
+- Hand-rolled citation formatters (APA, MLA, BibTeX, RIS, Vancouver) — zero deps, Workers-compatible
 
 Agent-friendly output:
 

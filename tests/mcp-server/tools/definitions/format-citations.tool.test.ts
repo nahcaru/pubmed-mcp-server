@@ -3,7 +3,7 @@
  * @module tests/mcp-server/tools/definitions/format-citations.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockEFetch = vi.fn();
@@ -72,6 +72,10 @@ describe('formatCitationsTool', () => {
     expect(result.totalFormatted).toBe(0);
     expect(result.totalSubmitted).toBe(1);
     expect(result.unavailablePmids).toEqual(['99999']);
+    // Empty-result recovery hint surfaced via ctx.enrich.notice → structuredContent + content[] (issue #59)
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.notice).toMatch(/no articles were returned/i);
+    expect(enrichment.notice).toContain('pubmed_search_articles');
   });
 
   it('generates citations for found articles', async () => {
@@ -121,6 +125,53 @@ describe('formatCitationsTool', () => {
     expect(result.citations[0]?.citations.apa).toContain('Smith');
     expect(result.totalSubmitted).toBe(1);
     expect(result.totalFormatted).toBe(1);
+    // notice is absent when at least one citation was produced (issue #59)
+    expect(getEnrichment(ctx).notice).toBeUndefined();
+  });
+
+  it('generates a Vancouver citation for a found article (issue #61)', async () => {
+    mockEFetch.mockResolvedValue({
+      PubmedArticleSet: {
+        PubmedArticle: [
+          {
+            MedlineCitation: {
+              PMID: { '#text': '34265844' },
+              Article: {
+                ArticleTitle: { '#text': 'Highly accurate protein structure prediction' },
+                AuthorList: {
+                  Author: [
+                    {
+                      LastName: { '#text': 'Jumper' },
+                      ForeName: { '#text': 'John' },
+                      Initials: { '#text': 'J' },
+                    },
+                  ],
+                },
+                Journal: {
+                  Title: { '#text': 'Nature' },
+                  ISOAbbreviation: { '#text': 'Nature' },
+                  JournalIssue: {
+                    Volume: { '#text': '596' },
+                    Issue: { '#text': '7873' },
+                    PubDate: { Year: { '#text': '2021' } },
+                  },
+                },
+                Pagination: { MedlinePgn: { '#text': '583-589' } },
+                PublicationTypeList: { PublicationType: { '#text': 'Journal Article' } },
+              },
+            },
+          },
+        ],
+      },
+    });
+
+    const ctx = createMockContext();
+    const input = formatCitationsTool.input.parse({ pmids: ['34265844'], format: 'vancouver' });
+    const result = await formatCitationsTool.handler(input, ctx);
+
+    const vancouver = result.citations[0]?.citations.vancouver ?? '';
+    expect(vancouver).toContain('Jumper J.');
+    expect(vancouver).toContain('Nature. 2021;596(7873):583-589.');
   });
 
   it('reports unavailable PMIDs for partial batches', async () => {
@@ -232,7 +283,7 @@ describe('formatCitationsTool', () => {
     expect(blocks[0]?.text).toContain('APA');
   });
 
-  it('formats empty results with recovery guidance', () => {
+  it('renders the empty state; the recovery notice is enrichment, not format output', () => {
     const blocks = formatCitationsTool.format!({
       totalSubmitted: 1,
       totalFormatted: 0,
@@ -242,9 +293,9 @@ describe('formatCitationsTool', () => {
 
     const text = blocks[0]?.text ?? '';
     expect(text).toContain('**Formatted:** 0/1');
-    expect(text).toContain('No articles were returned');
-    expect(text).toContain('pubmed_search_articles');
-    expect(text).toContain('pubmed_spell_check');
+    expect(text).toContain('**Unavailable PMIDs:** 99999');
+    // notice lives in enrichment (ctx.enrich.notice), not in format() text
+    expect(text).not.toMatch(/no articles were returned/i);
   });
 
   it('formats BibTeX and RIS citations in fenced code blocks', () => {

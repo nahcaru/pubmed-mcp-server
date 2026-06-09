@@ -14,6 +14,7 @@ import {
   formatCitations,
   formatMla,
   formatRis,
+  formatVancouver,
 } from '@/services/ncbi/formatting/citation-formatter.js';
 import type { ParsedArticle } from '@/services/ncbi/types.js';
 
@@ -182,6 +183,7 @@ describe('formatCitation', () => {
     'mla',
     'bibtex',
     'ris',
+    'vancouver',
   ] as const)('returns a non-empty string for style=%s', (style) => {
     const result = formatCitation(baseArticle, style);
     expect(typeof result).toBe('string');
@@ -217,13 +219,13 @@ describe('formatCitations', () => {
     expect(formatCitations(baseArticle, [])).toEqual({});
   });
 
-  it('returns all four styles when all are requested', () => {
-    const result = formatCitations(baseArticle, ['apa', 'mla', 'bibtex', 'ris']);
-    expect(Object.keys(result)).toHaveLength(4);
+  it('returns all five styles when all are requested', () => {
+    const result = formatCitations(baseArticle, ['apa', 'mla', 'bibtex', 'ris', 'vancouver']);
+    expect(Object.keys(result)).toHaveLength(5);
   });
 
   it('each style value matches direct formatCitation output', () => {
-    const styles = ['apa', 'mla', 'bibtex', 'ris'] as const;
+    const styles = ['apa', 'mla', 'bibtex', 'ris', 'vancouver'] as const;
     const multi = formatCitations(baseArticle, [...styles]);
     for (const style of styles) {
       expect(multi[style]).toBe(formatCitation(baseArticle, style));
@@ -265,6 +267,38 @@ describe('formatBibtex — special-character escaping', () => {
     const citation = formatBibtex({ ...baseArticle, title: 'Normal Title' });
     // Should not contain escaped-backslash artifacts on clean titles
     expect(citation).not.toContain('\\\\');
+  });
+});
+
+// ─── BibTeX: multi-word MeSH keywords (regression #68) ───────────────────────
+
+describe('formatBibtex — multi-word MeSH keywords', () => {
+  it('brace-wraps each descriptor so inverted-form commas do not split a term', () => {
+    const article: ParsedArticle = {
+      ...baseArticle,
+      keywords: [],
+      meshTerms: [
+        { descriptorName: 'Databases, Protein', isMajorTopic: false },
+        { descriptorName: 'Models, Molecular', isMajorTopic: false },
+        { descriptorName: 'Neural Networks, Computer', isMajorTopic: true },
+      ],
+    };
+    const bibtex = formatBibtex(article);
+    // Each multi-word MeSH descriptor stays one braced keyword
+    expect(bibtex).toContain('{Databases, Protein}');
+    expect(bibtex).toContain('{Models, Molecular}');
+    expect(bibtex).toContain('{Neural Networks, Computer}');
+  });
+
+  it('brace-wraps single-word keywords too, keeping terms unambiguous', () => {
+    const article: ParsedArticle = {
+      ...baseArticle,
+      keywords: ['Protein Folding'],
+      meshTerms: [{ descriptorName: 'Humans', isMajorTopic: false }],
+    };
+    const bibtex = formatBibtex(article);
+    expect(bibtex).toContain('{Protein Folding}');
+    expect(bibtex).toContain('{Humans}');
   });
 });
 
@@ -465,5 +499,9 @@ describe('formatters — sparse article (only pmid)', () => {
     const ris = formatRis(sparse);
     expect(ris).toMatch(/ER {2}- $/);
     expect(ris).toContain('TY  - JOUR');
+  });
+
+  it('formatVancouver returns a string for a pmid-only article', () => {
+    expect(typeof formatVancouver(sparse)).toBe('string');
   });
 });

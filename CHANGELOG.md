@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.8.0](changelog/2.8.x/2.8.0.md) — 2026-06-08
+
+Vancouver citation style, full-text reference extraction fix, BibTeX MeSH keyword fix, empty-result notices
+
 ## [2.7.11](changelog/2.7.x/2.7.11.md) — 2026-06-04
 
 fetch_fulltext: DOI→PMCID resolution via PMC ID Converter (#64), config-aware tool description (#65)

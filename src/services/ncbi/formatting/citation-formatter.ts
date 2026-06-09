@@ -1,6 +1,6 @@
 /**
  * @fileoverview Hand-rolled citation formatters for PubMed articles.
- * Supports APA 7th, MLA 9th, BibTeX, and RIS formats.
+ * Supports APA 7th, MLA 9th, BibTeX, RIS, and Vancouver (ICMJE/NLM) formats.
  * Pure TypeScript, zero dependencies, Workers-compatible.
  * @module src/services/ncbi/formatting/citation-formatter
  */
@@ -8,7 +8,7 @@
 import type { ParsedArticle, ParsedArticleAuthor } from '../types.js';
 
 /** Supported citation output formats. */
-export type CitationStyle = 'apa' | 'mla' | 'bibtex' | 'ris';
+export type CitationStyle = 'apa' | 'mla' | 'bibtex' | 'ris' | 'vancouver';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -405,8 +405,12 @@ export function formatBibtex(article: ParsedArticle): string {
   for (const m of article.meshTerms ?? []) {
     if (m.descriptorName) keywordSet.add(m.descriptorName);
   }
+  // Brace-wrap each term so MeSH descriptors that carry internal commas in
+  // their inverted form (e.g. "Databases, Protein") stay a single keyword —
+  // biblatex's comma-separated list parser reads a braced item as one element.
   if (keywordSet.size > 0) {
-    fields.push(['keywords', escapeBibtex([...keywordSet].join(', '))]);
+    const keywords = [...keywordSet].map((k) => `{${escapeBibtex(k)}}`).join(', ');
+    fields.push(['keywords', keywords]);
   }
 
   // Build entry
@@ -521,6 +525,102 @@ export function formatRis(article: ParsedArticle): string {
 }
 
 // ---------------------------------------------------------------------------
+// Vancouver (ICMJE / NLM)
+// ---------------------------------------------------------------------------
+
+/**
+ * Format a single author in Vancouver style: `Surname AB` — surname, a space,
+ * then initials with no periods or internal spaces. Collective/group authors
+ * return their name directly.
+ */
+function formatAuthorVancouver(author: ParsedArticleAuthor): string {
+  if (author.collectiveName) return author.collectiveName;
+  const last = author.lastName ?? '';
+  const initialsSource =
+    author.initials ??
+    author.firstName
+      ?.split(/[\s-]+/)
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join('');
+  // Letters only (Unicode-aware), uppercased, no separators: "AB", not "A. B."
+  const initials = initialsSource
+    ? Array.from(initialsSource)
+        .filter((c) => /\p{L}/u.test(c))
+        .join('')
+        .toUpperCase()
+    : '';
+  if (!last) return initials;
+  if (!initials) return last;
+  return `${last} ${initials}`;
+}
+
+/**
+ * Format the full author list for Vancouver: list every author for six or
+ * fewer; for seven or more, list the first six followed by `et al.` (ICMJE).
+ */
+function formatAuthorsVancouver(authors: ParsedArticleAuthor[]): string {
+  const names = authors.map(formatAuthorVancouver).filter(Boolean);
+  if (names.length === 0) return '';
+  if (names.length <= 6) return names.join(', ');
+  return `${names.slice(0, 6).join(', ')}, et al.`;
+}
+
+/**
+ * Format a PubMed article as a Vancouver (ICMJE/NLM) reference — the numbered
+ * style used by NEJM, Lancet, JAMA, BMJ, and most biomedical journals.
+ *
+ * Pattern (the leading list number is the consumer's responsibility — entries
+ * are formatted independently, so this returns the unnumbered reference body):
+ * ```
+ * Surname AB, Surname CD, et al. Article title. Abbrev J Name. Year;Vol(Issue):Pages. doi: 10.x/y
+ * ```
+ * Journal name uses the NLM/ISO abbreviation when available; pages are used as
+ * PubMed supplies them (often elided, e.g. "583-9"); the DOI carries no trailing
+ * period so it stays copy-pasteable.
+ */
+export function formatVancouver(article: ParsedArticle): string {
+  const segments: string[] = [];
+
+  // Authors — terminate with a period unless the list already ends in "et al."
+  const authorStr = article.authors?.length ? formatAuthorsVancouver(article.authors) : '';
+  if (authorStr) {
+    segments.push(authorStr.endsWith('.') ? authorStr : `${authorStr}.`);
+  }
+
+  // Title — sentence case as supplied, single terminating period
+  if (article.title) {
+    segments.push(`${article.title.replace(/\.\s*$/, '')}.`);
+  }
+
+  // Journal — NLM/ISO abbreviation preferred, full title as fallback
+  const journal = article.journalInfo;
+  const journalName = journal?.isoAbbreviation ?? journal?.title;
+  if (journalName) {
+    segments.push(`${journalName.replace(/\.\s*$/, '')}.`);
+  }
+
+  // Source — "Year;Volume(Issue):Pages."
+  const year = getYear(article);
+  let source = year !== 'n.d.' ? year : '';
+  if (journal?.volume) {
+    source += source ? `;${journal.volume}` : journal.volume;
+    if (journal.issue) source += `(${journal.issue})`;
+    if (journal.pages) source += `:${journal.pages}`;
+  } else if (journal?.pages) {
+    source += source ? `:${journal.pages}` : journal.pages;
+  }
+  if (source) segments.push(`${source}.`);
+
+  // DOI — NLM "doi: <doi>" form; no trailing period (would corrupt the DOI)
+  if (article.doi) {
+    segments.push(`doi: ${article.doi}`);
+  }
+
+  return segments.join(' ');
+}
+
+// ---------------------------------------------------------------------------
 // Dispatchers
 // ---------------------------------------------------------------------------
 
@@ -538,6 +638,8 @@ export function formatCitation(article: ParsedArticle, style: CitationStyle): st
       return formatBibtex(article);
     case 'ris':
       return formatRis(article);
+    case 'vancouver':
+      return formatVancouver(article);
   }
 }
 

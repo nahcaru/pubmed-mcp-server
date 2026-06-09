@@ -11,6 +11,7 @@ import {
   formatCitations,
   formatMla,
   formatRis,
+  formatVancouver,
 } from '@/services/ncbi/formatting/citation-formatter.js';
 import type { ParsedArticle } from '@/services/ncbi/types.js';
 
@@ -367,12 +368,90 @@ describe('formatRis', () => {
   });
 });
 
+describe('formatVancouver', () => {
+  it('formats a full article in ICMJE/NLM style', () => {
+    const citation = formatVancouver(sampleArticle);
+    // Authors: surname + initials, no periods, comma-separated; all listed (≤6)
+    expect(citation).toContain('Smith J, Doe JA, Johnson RB.');
+    expect(citation).toContain('A Novel Approach to Gene Therapy.');
+    // NLM journal abbreviation, not the full title
+    expect(citation).toContain('Nat Med.');
+    expect(citation).not.toContain('Nature Medicine');
+    // Year;Volume(Issue):Pages
+    expect(citation).toContain('2024;30(5):123-130.');
+    // DOI in NLM "doi: " form
+    expect(citation).toContain('doi: 10.1038/s41591-024-00001-0');
+  });
+
+  it('lists all authors for six or fewer', () => {
+    const authors = Array.from({ length: 6 }, (_, i) => ({
+      lastName: `Auth${i + 1}`,
+      initials: 'AB',
+    }));
+    const citation = formatVancouver({ ...sampleArticle, authors });
+    expect(citation).toContain('Auth1 AB, Auth2 AB, Auth3 AB, Auth4 AB, Auth5 AB, Auth6 AB.');
+    expect(citation).not.toContain('et al.');
+  });
+
+  it('truncates to the first six authors plus "et al." for seven or more', () => {
+    const authors = Array.from({ length: 7 }, (_, i) => ({
+      lastName: `Auth${i + 1}`,
+      initials: 'AB',
+    }));
+    const citation = formatVancouver({ ...sampleArticle, authors });
+    expect(citation).toContain('Auth6 AB, et al.');
+    expect(citation).not.toContain('Auth7');
+  });
+
+  it('renders initials without periods (Surname AB, not A. B.)', () => {
+    const citation = formatVancouver({
+      ...sampleArticle,
+      authors: [{ lastName: 'Jumper', firstName: 'John Michael', initials: 'JM' }],
+    });
+    expect(citation).toContain('Jumper JM.');
+  });
+
+  it('derives initials from firstName when the initials field is absent', () => {
+    const citation = formatVancouver({
+      ...sampleArticle,
+      authors: [{ lastName: 'Lee', firstName: 'Mary-Anne' }],
+    });
+    expect(citation).toContain('Lee MA.');
+  });
+
+  it('falls back to the full journal title when no ISO abbreviation is present', () => {
+    const article: ParsedArticle = {
+      ...sampleArticle,
+      journalInfo: { ...sampleArticle.journalInfo!, isoAbbreviation: undefined },
+    };
+    expect(formatVancouver(article)).toContain('Nature Medicine.');
+  });
+
+  it('uses a collective/group author name directly', () => {
+    const citation = formatVancouver({
+      ...sampleArticle,
+      authors: [{ collectiveName: 'WHO Study Group' }],
+    });
+    expect(citation).toContain('WHO Study Group.');
+  });
+
+  it('omits the DOI segment when no DOI is present', () => {
+    const article: ParsedArticle = { ...sampleArticle, doi: undefined };
+    expect(formatVancouver(article)).not.toContain('doi:');
+  });
+
+  it('handles a date-only article without crashing', () => {
+    expect(typeof formatVancouver(minimalArticle)).toBe('string');
+  });
+});
+
 describe('formatCitation', () => {
   it('dispatches to the correct formatter', () => {
     expect(formatCitation(sampleArticle, 'apa')).toBe(formatApa(sampleArticle));
     expect(formatCitation(sampleArticle, 'mla')).toBe(formatMla(sampleArticle));
     expect(formatCitation(sampleArticle, 'bibtex')).toBe(formatBibtex(sampleArticle));
     expect(formatCitation(sampleArticle, 'ris')).toBe(formatRis(sampleArticle));
+    expect(formatCitation(sampleArticle, 'vancouver')).toBe(formatVancouver(sampleArticle));
   });
 });
 
