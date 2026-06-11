@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.2](changelog/2.9.x/2.9.2.md) — 2026-06-11
+
+mcp-ts-core ^0.10.5: ctx.enrich.total(), z.stringbool(), server identity fields; totalCount enrichment rename; .mcpbignore anchored
+
 ## [2.9.1](changelog/2.9.x/2.9.1.md) — 2026-06-09
 
 fix(fetch_fulltext): element-citation references now delimited; PMC page/bibliographic tokens preserved verbatim
