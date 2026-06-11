@@ -25,21 +25,6 @@ const emptyAsUndefined = (v: unknown) => {
   return v;
 };
 
-/**
- * Parse a string env var as a boolean. `z.coerce.boolean()` is unusable for
- * env vars because it applies JavaScript truthy semantics — `"false"` coerces
- * to `true`. This mirrors the framework's `envBoolean` so `EUROPEPMC_ENABLED=false`
- * actually disables the service.
- */
-const envBoolean = z.preprocess((v) => {
-  if (typeof v === 'string') {
-    const s = v.trim().toLowerCase();
-    if (s === 'true' || s === '1') return true;
-    if (s === 'false' || s === '0' || s === '') return false;
-  }
-  return v;
-}, z.boolean());
-
 const ServerConfigSchema = z.object({
   apiKey: z.preprocess(emptyAsUndefined, z.string().optional()).describe('NCBI API key'),
   toolIdentifier: z.string().default('pubmed-mcp-server').describe('NCBI tool identifier'),
@@ -73,7 +58,8 @@ const ServerConfigSchema = z.object({
     .max(120000)
     .default(20000)
     .describe('Per-request HTTP timeout for Unpaywall lookups and content fetches, in ms'),
-  europepmcEnabled: envBoolean
+  europepmcEnabled: z
+    .stringbool()
     .default(true)
     .describe(
       'Enable Europe PMC search tool and `pubmed_fetch_fulltext` JATS fallback chain. Set false to fully disable EPMC calls.',

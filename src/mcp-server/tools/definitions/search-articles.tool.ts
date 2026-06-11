@@ -28,22 +28,22 @@ const DATE_RE = /^$|^\d{4}([/\-.]\d{1,2}([/\-.]\d{1,2})?)?$/;
  * bare empty arrays leave the caller without enough signal to recover:
  * - No matches at all (suggest spell-check / removing filters)
  * - Filters applied but nothing matched (suggest relaxing filters)
- * - Pagination overshoot (offset ≥ totalFound)
+ * - Pagination overshoot (offset ≥ totalCount)
  */
 function buildNotice(args: {
-  totalFound: number;
+  totalCount: number;
   pmidCount: number;
   offset: number;
   hasFilters: boolean;
 }): string | undefined {
-  const { totalFound, pmidCount, offset, hasFilters } = args;
-  if (totalFound === 0) {
+  const { totalCount, pmidCount, offset, hasFilters } = args;
+  if (totalCount === 0) {
     return hasFilters
       ? 'No results matched your query with the applied filters. Try removing filters (e.g. dateRange, publicationTypes, meshTerms), broadening dates, or verifying author/journal spelling.'
       : 'No results matched your query. Try running pubmed_spell_check for a suggested correction or broaden the query.';
   }
-  if (pmidCount === 0 && offset > 0 && offset >= totalFound) {
-    return `Offset ${offset} exceeds totalFound (${totalFound}). Reset offset to 0 or reduce it below ${totalFound} to page through results.`;
+  if (pmidCount === 0 && offset > 0 && offset >= totalCount) {
+    return `Offset ${offset} exceeds totalCount (${totalCount}). Reset offset to 0 or reduce it below ${totalCount} to page through results.`;
   }
   return;
 }
@@ -175,7 +175,7 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
     effectiveQuery: z
       .string()
       .describe('Sanitized query sent to PubMed after applying all active filters'),
-    totalFound: z.number().describe('Total matching articles'),
+    totalCount: z.number().describe('Total matching articles'),
     appliedFilters: AppliedFiltersSchema.describe(
       'Normalized filter values that were applied to the PubMed query',
     ),
@@ -191,7 +191,7 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
   // carries the full structured value; this only shapes the human-facing trailer line.
   enrichmentTrailer: {
     effectiveQuery: { label: 'Effective Query' },
-    totalFound: { label: 'Total Found' },
+    totalCount: { label: 'Total Found' },
     appliedFilters: {
       render: (filters) => {
         const lines: string[] = [];
@@ -346,18 +346,19 @@ export const searchArticlesTool = tool('pubmed_search_articles', {
       ...(input.species && { species: input.species }),
     };
     ctx.log.info('pubmed_search completed', {
-      totalFound: esResult.count,
+      totalCount: esResult.count,
       pmidCount: pmids.length,
     });
 
     const notice = buildNotice({
-      totalFound: esResult.count,
+      totalCount: esResult.count,
       pmidCount: pmids.length,
       offset: input.offset,
       hasFilters: Object.keys(appliedFilters).length > 0,
     });
 
-    ctx.enrich({ effectiveQuery, totalFound: esResult.count, appliedFilters });
+    ctx.enrich({ effectiveQuery, appliedFilters });
+    ctx.enrich.total(esResult.count);
     if (notice) ctx.enrich.notice(notice);
 
     return {

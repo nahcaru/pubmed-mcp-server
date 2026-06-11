@@ -195,7 +195,7 @@ describe('searchArticlesTool', () => {
     const result = await searchArticlesTool.handler(input, ctx);
 
     const enrichment = getEnrichment(ctx);
-    expect(enrichment.totalFound).toBe(100);
+    expect(enrichment.totalCount).toBe(100);
     expect(result.pmids).toEqual(['111', '222', '333']);
     expect(result.query).toBe('cancer');
     expect(enrichment.effectiveQuery).toBe('cancer');
@@ -373,7 +373,7 @@ describe('searchArticlesTool', () => {
   });
 
   describe('empty-result notice', () => {
-    it('suggests spell-check when totalFound is 0 and no filters applied', async () => {
+    it('suggests spell-check when totalCount is 0 and no filters applied', async () => {
       mockESearch.mockResolvedValue({
         count: 0,
         idList: [],
@@ -391,7 +391,7 @@ describe('searchArticlesTool', () => {
       expect(enrichment.notice).toContain('pubmed_spell_check');
     });
 
-    it('suggests removing filters when totalFound is 0 with filters applied', async () => {
+    it('suggests removing filters when totalCount is 0 with filters applied', async () => {
       mockESearch.mockResolvedValue({
         count: 0,
         idList: [],
@@ -413,7 +413,7 @@ describe('searchArticlesTool', () => {
       expect(enrichment.notice).toContain('filters');
     });
 
-    it('warns when offset exceeds totalFound', async () => {
+    it('warns when offset exceeds totalCount', async () => {
       mockESearch.mockResolvedValue({
         count: 100,
         idList: [],
@@ -429,7 +429,7 @@ describe('searchArticlesTool', () => {
       const enrichment = getEnrichment(ctx);
       expect(enrichment.notice).toBeDefined();
       expect(enrichment.notice).toContain('Offset 200');
-      expect(enrichment.notice).toContain('totalFound (100)');
+      expect(enrichment.notice).toContain('totalCount (100)');
     });
 
     it('omits notice on a successful result page', async () => {

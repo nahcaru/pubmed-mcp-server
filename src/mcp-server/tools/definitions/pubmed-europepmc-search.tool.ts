@@ -148,7 +148,7 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
   // Surfaced via ctx.enrich(...) to structuredContent and content[]; out of the return.
   enrichment: {
     query: z.string().describe('Effective query string echoed by Europe PMC'),
-    hitCount: z.number().describe('Total matching records across all pages'),
+    totalCount: z.number().describe('Total matching records across all pages'),
     appliedSources: z
       .array(SourceEnum)
       .describe('Sources the query was filtered against (defaults applied)'),
@@ -162,7 +162,7 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
   // carries the full structured value; this only shapes the human-facing trailer line.
   enrichmentTrailer: {
     query: { label: 'Effective Query' },
-    hitCount: { label: 'Total Hits' },
+    totalCount: { label: 'Total Hits' },
     appliedSources: {
       render: (sources) => `**Sources:** ${sources.join(', ')}`,
     },
@@ -235,9 +235,9 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
 
     ctx.enrich({
       query: result.query,
-      hitCount: result.hitCount,
       appliedSources: [...sources] as ('MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR')[],
     });
+    ctx.enrich.total(result.hitCount);
     if (notice) ctx.enrich.notice(notice);
 
     return {

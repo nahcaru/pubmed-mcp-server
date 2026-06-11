@@ -130,9 +130,11 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
       .describe('Matching MeSH records'),
   }),
 
-  // Recovery guidance when no descriptor matched — agent-facing context, surfaced via
-  // ctx.enrich.notice() to both structuredContent and content[]; absent on success.
+  // Result-set context — total match count for disclosure against the maxResults cap,
+  // and recovery guidance when no descriptor matched. Surfaced via ctx.enrich(...)
+  // to structuredContent and content[]; absent on success.
   enrichment: {
+    totalCount: z.number().describe('Total matching MeSH descriptors'),
     notice: z
       .string()
       .optional()
@@ -165,6 +167,7 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
     ids.length = Math.min(ids.length, maxResults);
 
     if (ids.length === 0) {
+      ctx.enrich.total(0);
       ctx.enrich.notice(
         `No MeSH descriptors matched "${query}". Try \`pubmed_spell_check\` for a suggested correction, broaden the term, or use \`pubmed_search_articles\` for free-text discovery against article metadata.`,
       );
@@ -181,6 +184,7 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
       return aExact - bExact;
     });
 
+    ctx.enrich.total(results.length);
     return { query, results };
   },
 

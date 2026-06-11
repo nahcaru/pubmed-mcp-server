@@ -131,18 +131,18 @@ describe('findRelatedTool', () => {
     for (const a of result2.articles) expect(set0.has(a.pmid)).toBe(false);
   });
 
-  it('emits overshoot notice when offset >= totalFound on non-empty set', async () => {
+  it('emits overshoot notice when offset >= totalCount on non-empty set', async () => {
     const pmids = ['101', '102', '103'];
     mockELink.mockResolvedValue(eLinkResponse(pmids));
     mockESummary.mockResolvedValue({ eSummaryResult: {} });
     mockExtractBriefSummaries.mockResolvedValue([]);
 
     const ctx = createMockContext();
-    // offset=10, totalFound=3 → overshoot
+    // offset=10, totalCount=3 → overshoot
     const input = findRelatedTool.input.parse({ pmid: '12345', maxResults: 10, offset: 10 });
     await findRelatedTool.handler(input, ctx);
 
-    expect(getEnrichment(ctx).notice).toContain('Offset 10 exceeds totalFound');
+    expect(getEnrichment(ctx).notice).toContain('Offset 10 exceeds totalCount');
     expect(getEnrichment(ctx).notice).toContain('3');
   });
 
@@ -206,7 +206,7 @@ describe('findRelatedTool', () => {
     expect(getEnrichment(ctx).source).toBe('europepmc');
     expect(getEnrichment(ctx).notice).toBeDefined();
     expect(getEnrichment(ctx).notice).toContain('Europe PMC');
-    expect(getEnrichment(ctx).totalFound).toBe(50);
+    expect(getEnrichment(ctx).totalCount).toBe(50);
     expect(result.articles[0]?.pmid).toBe('333');
   });
 
@@ -314,7 +314,7 @@ describe('findRelatedTool', () => {
     const result = await findRelatedTool.handler(input, ctx);
 
     expect(result.articles).toEqual([]);
-    expect(getEnrichment(ctx).totalFound).toBe(0);
+    expect(getEnrichment(ctx).totalCount).toBe(0);
     expect(getEnrichment(ctx).notice).toBeUndefined();
   });
 
@@ -328,7 +328,7 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '99999999999' });
       const result = await findRelatedTool.handler(input, ctx);
 
-      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(result.articles).toEqual([]);
       expect(getEnrichment(ctx).notice).toContain('99999999999');
       expect(getEnrichment(ctx).notice).toContain('not found in PubMed');
@@ -345,7 +345,7 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '12345' });
       await findRelatedTool.handler(input, ctx);
 
-      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeUndefined();
     });
   });
@@ -405,7 +405,7 @@ describe('findRelatedTool', () => {
       { db: 'pubmed', id: '222,111' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(getEnrichment(ctx).totalFound).toBe(2);
+    expect(getEnrichment(ctx).totalCount).toBe(2);
     expect(result.articles).toEqual([
       {
         pmid: '222',
@@ -488,7 +488,7 @@ describe('findRelatedTool', () => {
       },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
-    expect(getEnrichment(ctx).totalFound).toBe(0);
+    expect(getEnrichment(ctx).totalCount).toBe(0);
   });
 
   describe('references coverage for non-PMC sources (issues #42, #63)', () => {
@@ -509,7 +509,7 @@ describe('findRelatedTool', () => {
       const result = await findRelatedTool.handler(input, ctx);
 
       expect(getEnrichment(ctx).source).toBe('europepmc');
-      expect(getEnrichment(ctx).totalFound).toBe(149);
+      expect(getEnrichment(ctx).totalCount).toBe(149);
       expect(getEnrichment(ctx).notice).toContain('Europe PMC');
       expect(result.articles.map((a) => a.pmid)).toEqual(['888', '999']);
       // EPMC served first — OpenAlex is not consulted.
@@ -550,7 +550,7 @@ describe('findRelatedTool', () => {
       // EPMC + OpenAlex were both consulted before giving up.
       expect(mockEpmcReferences).toHaveBeenCalled();
       expect(mockOaReferences).toHaveBeenCalled();
-      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toContain('37952131');
       expect(getEnrichment(ctx).notice).toContain('OpenAlex');
       expect(getEnrichment(ctx).notice).toContain('pubmed_fetch_articles');
@@ -594,7 +594,7 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'references' });
       await findRelatedTool.handler(input, ctx);
 
-      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeUndefined();
     });
 
@@ -671,7 +671,7 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '99999999999', relationship });
       const result = await findRelatedTool.handler(input, ctx);
 
-      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(result.articles).toEqual([]);
       expect(getEnrichment(ctx).notice).toContain('99999999999');
       expect(getEnrichment(ctx).notice).toContain('not found in PubMed');
@@ -716,7 +716,7 @@ describe('findRelatedTool', () => {
       const input = findRelatedTool.input.parse({ pmid: '12345', relationship: 'similar' });
       await findRelatedTool.handler(input, ctx);
 
-      expect(getEnrichment(ctx).totalFound).toBe(0);
+      expect(getEnrichment(ctx).totalCount).toBe(0);
       expect(getEnrichment(ctx).notice).toBeUndefined();
     });
   });

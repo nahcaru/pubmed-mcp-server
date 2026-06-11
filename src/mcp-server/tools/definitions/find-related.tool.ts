@@ -235,7 +235,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
   // the answering provider, and recovery guidance. Surfaced via ctx.enrich(...)
   // to structuredContent and content[]; kept out of the domain return.
   enrichment: {
-    totalFound: z.number().describe('Total related articles found before windowing'),
+    totalCount: z.number().describe('Total related articles found before windowing'),
     source: z
       .enum(['ncbi', 'europepmc', 'openalex'])
       .describe('Provider that answered this request'),
@@ -248,7 +248,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
   },
 
   enrichmentTrailer: {
-    totalFound: { label: 'Total Found' },
+    totalCount: { label: 'Total Found' },
     source: { label: 'Source' },
   },
 
@@ -332,7 +332,8 @@ export const findRelatedTool = tool('pubmed_find_related', {
 
     // ── Every provider failed ─────────────────────────────────────────────────
     if (providerResult === null) {
-      ctx.enrich({ totalFound: 0, source: 'ncbi' });
+      ctx.enrich({ source: 'ncbi' });
+      ctx.enrich.total(0);
       ctx.enrich.notice(
         `All providers failed to retrieve related articles (NCBI, Europe PMC, OpenAlex). Last error: ${describeError(providerError ?? 'unknown')}. Retry after a brief delay.`,
       );
@@ -370,7 +371,8 @@ export const findRelatedTool = tool('pubmed_find_related', {
       }
 
       if (sourceConfirmedMissing) {
-        ctx.enrich({ totalFound: 0, source: 'ncbi' });
+        ctx.enrich({ source: 'ncbi' });
+        ctx.enrich.total(0);
         ctx.enrich.notice(
           `Source PMID ${input.pmid} not found in PubMed. Verify the ID with \`pubmed_fetch_articles\` or \`pubmed_search_articles\`.`,
         );
@@ -410,7 +412,8 @@ export const findRelatedTool = tool('pubmed_find_related', {
           providerResult = refFallback;
           fallbackKind = 'references_coverage';
         } else {
-          ctx.enrich({ totalFound: 0, source: 'ncbi' });
+          ctx.enrich({ source: 'ncbi' });
+          ctx.enrich.total(0);
           const sourcePmcId = sourceSummary.pmcId;
           ctx.enrich.notice(
             sourcePmcId
@@ -427,7 +430,8 @@ export const findRelatedTool = tool('pubmed_find_related', {
       } else {
         // similar / cited_by empty for a valid source, or references with an
         // unconfirmed source — return the honest empty without a notice.
-        ctx.enrich({ totalFound: 0, source: 'ncbi' });
+        ctx.enrich({ source: 'ncbi' });
+        ctx.enrich.total(0);
         return {
           sourcePmid: input.pmid,
           relationship: input.relationship,
@@ -439,7 +443,8 @@ export const findRelatedTool = tool('pubmed_find_related', {
 
     // ── Window the result set + enrich ──────────────────────────────────────────
     const { allPmids, totalCount, source } = providerResult;
-    ctx.enrich({ totalFound: totalCount, source });
+    ctx.enrich({ source });
+    ctx.enrich.total(totalCount);
 
     // For NCBI the full neighbor set is in memory; for EPMC/OpenAlex the provider
     // pre-fetched enough to cover the window. Slice the requested page either way.
@@ -450,7 +455,7 @@ export const findRelatedTool = tool('pubmed_find_related', {
     const notices: string[] = [];
     if (input.offset > 0 && input.offset >= totalCount) {
       notices.push(
-        `Offset ${input.offset} exceeds totalFound (${totalCount}). Reset offset to 0 or reduce it below ${totalCount} to page through results.`,
+        `Offset ${input.offset} exceeds totalCount (${totalCount}). Reset offset to 0 or reduce it below ${totalCount} to page through results.`,
       );
     }
     if (source !== 'ncbi') {
