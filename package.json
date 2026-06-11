@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/pubmed-mcp-server",
-  "version": "2.9.3",
+  "version": "2.9.4",
   "mcpName": "io.github.cyanheads/pubmed-mcp-server",
   "description": "Search PubMed/Europe PMC, fetch articles and full text (PMC/EPMC/Unpaywall), citations, MeSH terms via MCP. STDIO or Streamable HTTP.",
   "type": "module",
@@ -23,7 +23,7 @@
     "list-skills": "bun run scripts/list-skills.ts",
     "lint:mcp": "bun run scripts/lint-mcp.ts",
     "lint:packaging": "bun run scripts/lint-packaging.ts",
-    "bundle": "bun run build && npx -y @anthropic-ai/mcpb pack . dist/pubmed-mcp-server.mcpb",
+    "bundle": "bun run build && npx -y @anthropic-ai/mcpb pack . dist/pubmed-mcp-server.mcpb && bun run scripts/clean-mcpb.ts dist/pubmed-mcp-server.mcpb",
     "changelog:build": "bun run scripts/build-changelog.ts",
     "changelog:check": "bun run scripts/build-changelog.ts --check",
     "release:github": "bun run scripts/release-github.ts",
@@ -81,7 +81,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@cyanheads/mcp-ts-core": "^0.10.5",
+    "@cyanheads/mcp-ts-core": "^0.10.6",
     "defuddle": "^0.18.1",
     "fast-xml-parser": "^5.8.0",
     "linkedom": "^0.18.12",
