@@ -40,9 +40,6 @@ const tools = [
 await createApp({
   name: 'pubmed-mcp-server',
   title: 'pubmed-mcp-server',
-  websiteUrl: 'https://github.com/cyanheads/pubmed-mcp-server',
-  description:
-    'Search PubMed/Europe PMC, fetch articles and full text (PMC/EPMC/Unpaywall), citations, MeSH terms.',
   tools,
   resources: [databaseInfoResource],
   prompts: [researchPlanPrompt],
