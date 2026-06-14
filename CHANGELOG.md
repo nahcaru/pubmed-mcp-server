@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.5](changelog/2.9.x/2.9.5.md) — 2026-06-13
+
+Fixes: transient NCBI eutils 500s now reclassify to ServiceUnavailable and retry; pubmed_lookup_mesh returns the canonical MeSH DescriptorUI with a new entrezUid field
+
 ## [2.9.4](changelog/2.9.x/2.9.4.md) — 2026-06-11
 
 mcp-ts-core ^0.10.6: post-pack bundle cleaner, packaging identity checks; lint-packaging checks 8–9 synced; orchestrations skill v1.3
