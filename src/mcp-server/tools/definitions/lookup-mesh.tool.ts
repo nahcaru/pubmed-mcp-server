@@ -19,11 +19,29 @@ import {
 // ─── MeSH eSummary parsing helpers ───────────────────────────────────────────
 
 interface MeshRecord {
+  entrezUid: string;
   entryTerms?: string[];
   meshId: string;
   name: string;
   scopeNote?: string;
   treeNumbers?: string[];
+}
+
+/**
+ * NCBI Entrez mesh UIDs encode the canonical MeSH DescriptorUI as the ASCII code of the
+ * UI's letter prefix followed by its 6-digit number: D=68, C=67 (supplementary concept),
+ * Q=81 (qualifier). So `68003924` → `D003924`. Modern supplementary-concept records receive
+ * plain sequential UIDs that don't encode a UI (e.g. `2025952`); those aren't decodable, so
+ * the raw Entrez UID is returned unchanged.
+ */
+const ENTREZ_UID_PREFIX: Record<string, string> = { '67': 'C', '68': 'D', '81': 'Q' };
+
+function decodeMeshDescriptorUi(entrezUid: string): string {
+  if (/^\d{8}$/.test(entrezUid)) {
+    const letter = ENTREZ_UID_PREFIX[entrezUid.slice(0, 2)];
+    if (letter) return `${letter}${entrezUid.slice(2)}`;
+  }
+  return entrezUid;
 }
 
 function findItem(
@@ -62,19 +80,22 @@ function extractTreeNumbers(items: Record<string, unknown>[]): string[] {
 }
 
 function parseSummaryRecords(data: unknown, ids: string[], includeDetails: boolean): MeshRecord[] {
-  if (!data || typeof data !== 'object') return ids.map((id) => ({ meshId: id, name: id }));
+  if (!data || typeof data !== 'object')
+    return ids.map((id) => ({ entrezUid: id, meshId: decodeMeshDescriptorUi(id), name: id }));
   const root = data as Record<string, unknown>;
   const summaryResult = root.eSummaryResult as Record<string, unknown> | undefined;
   const docSums = ensureArray<Record<string, unknown>>(
     (summaryResult ?? root).DocSum as Record<string, unknown>,
   );
-  if (docSums.length === 0) return ids.map((id) => ({ meshId: id, name: id }));
+  if (docSums.length === 0)
+    return ids.map((id) => ({ entrezUid: id, meshId: decodeMeshDescriptorUi(id), name: id }));
 
   return docSums.map((doc) => {
-    const meshId = getText(doc.Id);
+    const entrezUid = getText(doc.Id);
+    const meshId = decodeMeshDescriptorUi(entrezUid);
     const items = ensureArray(doc.Item) as Record<string, unknown>[];
     const name = getItemText(findItem(items, 'DS_MeshTerms')) || meshId;
-    const record: MeshRecord = { meshId, name };
+    const record: MeshRecord = { entrezUid, meshId, name };
     if (includeDetails) {
       const scopeNote = getItemText(findItem(items, 'DS_ScopeNote'));
       if (scopeNote) record.scopeNote = scopeNote;
@@ -119,7 +140,16 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
       .array(
         z
           .object({
-            meshId: z.string().describe('MeSH descriptor unique identifier'),
+            meshId: z
+              .string()
+              .describe(
+                'Canonical MeSH DescriptorUI (e.g. "D003924") — resolves at the MeSH Browser and NLM linked data. Falls back to the raw Entrez UID when a record is not decodable.',
+              ),
+            entrezUid: z
+              .string()
+              .describe(
+                'NCBI Entrez UID for this record — the join key for E-utilities (eSummary/eFetch db=mesh).',
+              ),
             name: z.string().describe('Descriptor name'),
             treeNumbers: z.array(z.string()).optional().describe('MeSH tree numbers'),
             scopeNote: z.string().optional().describe('Scope note'),
@@ -196,6 +226,7 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
     for (const r of result.results) {
       lines.push(`\n## ${r.name}`);
       lines.push(`- **MeSH ID:** ${r.meshId}`);
+      lines.push(`- **Entrez UID:** ${r.entrezUid}`);
       if (r.treeNumbers?.length) lines.push(`- **Tree Numbers:** ${r.treeNumbers.join(', ')}`);
       if (r.scopeNote) lines.push(`- **Scope Note:** ${r.scopeNote}`);
       if (r.entryTerms?.length) lines.push(`- **Entry Terms:** ${r.entryTerms.join('; ')}`);
