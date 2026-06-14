@@ -6,12 +6,7 @@
  */
 
 import { JsonRpcErrorCode, McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
-import {
-  fetchWithTimeout,
-  httpErrorFromResponse,
-  logger,
-  requestContextService,
-} from '@cyanheads/mcp-ts-core/utils';
+import { httpErrorFromResponse, logger, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 
 import { recoveryFor } from '@/services/error-contracts.js';
 import { NCBI_EUTILS_BASE_URL, type NcbiRequestOptions, type NcbiRequestParams } from './types.js';
@@ -101,10 +96,7 @@ export class NcbiApiClient {
     const qs = new URLSearchParams(finalParams).toString();
     const fullUrl = qs ? `${url}?${qs}` : url;
 
-    const timeoutSignal = AbortSignal.timeout(this.config.timeoutMs);
-    const signal = externalSignal
-      ? AbortSignal.any([timeoutSignal, externalSignal])
-      : timeoutSignal;
+    const signal = this.buildTimeoutSignal(externalSignal);
 
     try {
       logger.debug(
@@ -158,6 +150,12 @@ export class NcbiApiClient {
     return queryString.length > POST_THRESHOLD;
   }
 
+  /**
+   * GET an eutils endpoint. Uses plain fetch (not fetchWithTimeout) so {@link makeRequest}
+   * can inspect the response status and apply its 500→ServiceUnavailable reclassification —
+   * fetchWithTimeout throws on any non-2xx before the status can be read, which left that
+   * override unreachable.
+   */
   private getRequest(
     url: string,
     params: Record<string, string>,
@@ -165,22 +163,30 @@ export class NcbiApiClient {
   ): Promise<Response> {
     const qs = new URLSearchParams(params).toString();
     const fullUrl = qs ? `${url}?${qs}` : url;
-    const ctx = requestContextService.createRequestContext({ operation: 'NcbiGet', url: fullUrl });
-    return fetchWithTimeout(fullUrl, this.config.timeoutMs, ctx, signal ? { signal } : undefined);
+    return fetch(fullUrl, { signal: this.buildTimeoutSignal(signal) });
   }
 
+  /** POST an eutils endpoint (large payloads). Plain fetch — see {@link getRequest}. */
   private postRequest(
     url: string,
     params: Record<string, string>,
     signal?: AbortSignal,
   ): Promise<Response> {
     const body = new URLSearchParams(params).toString();
-    const ctx = requestContextService.createRequestContext({ operation: 'NcbiPost', url });
-    return fetchWithTimeout(url, this.config.timeoutMs, ctx, {
+    return fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body,
-      ...(signal && { signal }),
+      signal: this.buildTimeoutSignal(signal),
     });
+  }
+
+  /**
+   * Composes the per-request timeout (`AbortSignal.timeout`) with an optional caller
+   * signal — whichever aborts first wins. Shared by every fetch path in this client.
+   */
+  private buildTimeoutSignal(externalSignal?: AbortSignal): AbortSignal {
+    const timeoutSignal = AbortSignal.timeout(this.config.timeoutMs);
+    return externalSignal ? AbortSignal.any([timeoutSignal, externalSignal]) : timeoutSignal;
   }
 }

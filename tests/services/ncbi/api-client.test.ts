@@ -4,26 +4,25 @@
  */
 
 import { McpError } from '@cyanheads/mcp-ts-core/errors';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NcbiApiClient, type NcbiApiClientConfig } from '@/services/ncbi/api-client.js';
 
+// makeRequest now uses plain `globalThis.fetch` (mirroring makeExternalRequest) so the
+// 500→ServiceUnavailable reclassification in makeRequest is reachable; the suites spy the
+// global. httpErrorFromResponse stays real (via `...actual`) so status→code classification
+// is exercised, not mocked.
 vi.mock('@cyanheads/mcp-ts-core/utils', async () => {
   const actual = await vi.importActual<typeof import('@cyanheads/mcp-ts-core/utils')>(
     '@cyanheads/mcp-ts-core/utils',
   );
-  const mockFetch = vi.fn();
   return {
     ...actual,
     logger: { debug: vi.fn(), info: vi.fn(), warning: vi.fn(), error: vi.fn() },
-    fetchWithTimeout: mockFetch,
     requestContextService: {
       createRequestContext: vi.fn(() => ({ requestId: 'test' })),
     },
   };
 });
-
-const { fetchWithTimeout } = await import('@cyanheads/mcp-ts-core/utils');
-const mockFetch = fetchWithTimeout as ReturnType<typeof vi.fn>;
 
 const baseConfig: NcbiApiClientConfig = {
   toolIdentifier: 'test-tool',
@@ -31,30 +30,35 @@ const baseConfig: NcbiApiClientConfig = {
 };
 
 describe('NcbiApiClient', () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    mockFetch.mockReset();
+    fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('<xml/>', { status: 200 }));
+  });
+
+  afterEach(() => {
+    fetchSpy.mockRestore();
   });
 
   it('makes a GET request with params', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      status: 200,
-      text: () => Promise.resolve('<xml/>'),
-    });
     const client = new NcbiApiClient(baseConfig);
     const result = await client.makeRequest('esearch', { db: 'pubmed', term: 'cancer' });
 
     expect(result).toBe('<xml/>');
-    expect(mockFetch).toHaveBeenCalledOnce();
-    const url = mockFetch.mock.calls[0]?.[0] as string;
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const url = fetchSpy.mock.calls[0]?.[0] as string;
     expect(url).toContain('esearch.fcgi');
     expect(url).toContain('db=pubmed');
     expect(url).toContain('term=cancer');
     expect(url).toContain('tool=test-tool');
+    // GET path: plain fetch with no method on the init.
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(init?.method).toBeUndefined();
   });
 
   it('injects api_key and email when configured', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
     const client = new NcbiApiClient({
       ...baseConfig,
       apiKey: 'my-key',
@@ -62,42 +66,42 @@ describe('NcbiApiClient', () => {
     });
     await client.makeRequest('esearch', { db: 'pubmed' });
 
-    const url = mockFetch.mock.calls[0]?.[0] as string;
+    const url = fetchSpy.mock.calls[0]?.[0] as string;
     expect(url).toContain('api_key=my-key');
     expect(url).toContain('email=me%40test.com');
   });
 
   it('uses POST for large payloads', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
     const client = new NcbiApiClient(baseConfig);
     // Create a long id list to exceed POST_THRESHOLD
     const longId = Array.from({ length: 500 }, (_, i) => String(i)).join(',');
     await client.makeRequest('efetch', { db: 'pubmed', id: longId });
 
-    // POST calls pass additional fetch options
-    expect(mockFetch.mock.calls[0]?.[3]).toMatchObject({ method: 'POST' });
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.body).toContain('id=');
   });
 
   it('uses POST when usePost option is set', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
     const client = new NcbiApiClient(baseConfig);
     await client.makeRequest('efetch', { db: 'pubmed' }, { usePost: true });
 
-    expect(mockFetch.mock.calls[0]?.[3]).toMatchObject({ method: 'POST' });
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
   });
 
-  it('re-throws McpError as-is', async () => {
+  it('re-throws an McpError surfaced by fetch as-is', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockRejectedValueOnce(new McpError(JsonRpcErrorCode.InvalidRequest, 'bad request'));
+    fetchSpy.mockRejectedValueOnce(new McpError(JsonRpcErrorCode.InvalidRequest, 'bad request'));
 
     const client = new NcbiApiClient(baseConfig);
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toThrow('bad request');
-    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
   it('throws RateLimited for HTTP 429', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 429 }));
+    fetchSpy.mockResolvedValueOnce(new Response('', { status: 429 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
@@ -106,9 +110,9 @@ describe('NcbiApiClient', () => {
     });
   });
 
-  it('throws ServiceUnavailable for HTTP 5xx', async () => {
+  it('throws ServiceUnavailable for HTTP 503', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 503 }));
+    fetchSpy.mockResolvedValueOnce(new Response('', { status: 503 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
@@ -117,12 +121,13 @@ describe('NcbiApiClient', () => {
     });
   });
 
-  it('reclassifies HTTP 500 as ServiceUnavailable (issue #62)', async () => {
-    // NCBI's eutils proxy returns 500 for transient mesh-layer failures that are
-    // safe to retry. The codeOverride hook must map 500 → ServiceUnavailable so
-    // the retry loop in NcbiService.withRetry picks it up.
+  it('reclassifies HTTP 500 as ServiceUnavailable so withRetry picks it up (issue #70)', async () => {
+    // NCBI's eutils proxy returns 500 for transient mesh-layer failures that are safe to
+    // retry. Routing getRequest/postRequest through plain fetch makes makeRequest's
+    // codeOverride (500 → ServiceUnavailable) reachable — it was dead behind
+    // fetchWithTimeout, which threw on non-2xx before the status could be inspected.
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce(new Response('WWW Error 500', { status: 500 }));
+    fetchSpy.mockResolvedValueOnce(new Response('WWW Error 500', { status: 500 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('elink', { db: 'pubmed' })).rejects.toMatchObject({
@@ -134,7 +139,7 @@ describe('NcbiApiClient', () => {
   it('does not reclassify HTTP 501 (keeps InternalError)', async () => {
     // 501 Not Implemented is not a transient NCBI failure — leave as InternalError.
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 501 }));
+    fetchSpy.mockResolvedValueOnce(new Response('', { status: 501 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
@@ -144,7 +149,7 @@ describe('NcbiApiClient', () => {
 
   it('throws InvalidParams for HTTP 400', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 400 }));
+    fetchSpy.mockResolvedValueOnce(new Response('', { status: 400 }));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
@@ -154,17 +159,17 @@ describe('NcbiApiClient', () => {
   });
 
   it('wraps non-McpError as ServiceUnavailable', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('network error'));
+    fetchSpy.mockRejectedValueOnce(new Error('network error'));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toThrow(
       /NCBI request failed: network error/,
     );
-    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
   it('wrapped non-McpError carries reason ncbi_unreachable + recovery on the wire', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('ECONNRESET'));
+    fetchSpy.mockRejectedValueOnce(new Error('ECONNRESET'));
     const client = new NcbiApiClient(baseConfig);
 
     await expect(client.makeRequest('esearch', { db: 'pubmed' })).rejects.toMatchObject({
@@ -177,41 +182,35 @@ describe('NcbiApiClient', () => {
   });
 
   it('wrapped non-McpError on external request also carries reason + recovery', async () => {
-    // makeExternalRequest uses raw fetch (not fetchWithTimeout), so mock the global.
-    const globalFetchSpy = vi
-      .spyOn(globalThis, 'fetch')
-      .mockRejectedValueOnce(new Error('ETIMEDOUT'));
+    fetchSpy.mockRejectedValueOnce(new Error('ETIMEDOUT'));
     const client = new NcbiApiClient(baseConfig);
 
-    try {
-      await expect(
-        client.makeExternalRequest('https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/', {
-          ids: '10.1093/nar/gks1195',
-        }),
-      ).rejects.toMatchObject({
-        data: {
-          reason: 'ncbi_unreachable',
-          recovery: { hint: expect.stringContaining('NCBI was unreachable') },
-        },
-      });
-    } finally {
-      globalFetchSpy.mockRestore();
-    }
+    await expect(
+      client.makeExternalRequest('https://www.ncbi.nlm.nih.gov/pmc/utils/idconv/v1.0/', {
+        ids: '10.1093/nar/gks1195',
+      }),
+    ).rejects.toMatchObject({
+      data: {
+        reason: 'ncbi_unreachable',
+        recovery: { hint: expect.stringContaining('NCBI was unreachable') },
+      },
+    });
   });
 
-  it('forwards options.signal to fetchWithTimeout on GET', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
+  it('composes the caller signal with the per-request timeout on GET', async () => {
     const controller = new AbortController();
     const client = new NcbiApiClient(baseConfig);
 
     await client.makeRequest('esearch', { db: 'pubmed' }, { signal: controller.signal });
 
-    const options = mockFetch.mock.calls[0]?.[3] as { signal?: AbortSignal } | undefined;
-    expect(options?.signal).toBe(controller.signal);
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    // Aborting the caller controller cascades to the composed signal.
+    controller.abort(new Error('cancelled'));
+    expect(init?.signal?.aborted).toBe(true);
   });
 
-  it('forwards options.signal to fetchWithTimeout on POST', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
+  it('composes the caller signal with the per-request timeout on POST', async () => {
     const controller = new AbortController();
     const client = new NcbiApiClient(baseConfig);
 
@@ -221,20 +220,22 @@ describe('NcbiApiClient', () => {
       { usePost: true, signal: controller.signal },
     );
 
-    const options = mockFetch.mock.calls[0]?.[3] as { method?: string; signal?: AbortSignal };
-    expect(options.method).toBe('POST');
-    expect(options.signal).toBe(controller.signal);
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    controller.abort(new Error('cancelled'));
+    expect(init.signal?.aborted).toBe(true);
   });
 
-  it('omits signal from fetchWithTimeout when none provided', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, status: 200, text: () => Promise.resolve('ok') });
+  it('uses only the per-request timeout signal when no caller signal is provided', async () => {
     const client = new NcbiApiClient(baseConfig);
 
     await client.makeRequest('esearch', { db: 'pubmed' });
 
-    // GET path: no init arg at all when no signal.
-    const initArg = mockFetch.mock.calls[0]?.[3];
-    expect(initArg).toBeUndefined();
+    // Every request now carries a timeout signal (not aborted at call time).
+    const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect(init?.signal?.aborted).toBe(false);
   });
 });
 
