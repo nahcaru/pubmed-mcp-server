@@ -147,6 +147,56 @@ describe('lookupMeshTool', () => {
     });
   });
 
+  it('filters non-navigable @-pointer "tree numbers" from SCRs (#76)', async () => {
+    mockESearch.mockImplementation(async (params: { term: string }) =>
+      params.term.endsWith('[MH]') ? { idList: [] } : { idList: ['67585596', '68008687'] },
+    );
+    mockESummary.mockResolvedValue({
+      eSummaryResult: {
+        DocSum: [
+          {
+            // Supplementary Concept Record (Jentadueto): TreeNum is a mapped-heading
+            // pointer (@-prefixed), not a navigable tree number.
+            Id: '67585596',
+            Item: [
+              { '@_Name': 'DS_MeshTerms', Item: [{ '#text': 'Jentadueto' }] },
+              {
+                '@_Name': 'DS_IdxLinks',
+                Item: [{ Item: [{ '@_Name': 'TreeNum', '#text': '@218176' }] }],
+              },
+            ],
+          },
+          {
+            // True descriptor (Metformin): a real tree number plus a stray @-pointer
+            // that must still be dropped.
+            Id: '68008687',
+            Item: [
+              { '@_Name': 'DS_MeshTerms', Item: [{ '#text': 'Metformin' }] },
+              {
+                '@_Name': 'DS_IdxLinks',
+                Item: [
+                  { Item: [{ '@_Name': 'TreeNum', '#text': 'D02.078.370.141.450' }] },
+                  { Item: [{ '@_Name': 'TreeNum', '#text': '@218176' }] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const ctx = createMockContext();
+    const input = lookupMeshTool.input.parse({ query: 'metformin' });
+    const result = await lookupMeshTool.handler(input, ctx);
+
+    const jentadueto = result.results.find((r) => r.entrezUid === '67585596');
+    const metformin = result.results.find((r) => r.entrezUid === '68008687');
+    // SCR with only an @-pointer → treeNumbers omitted entirely.
+    expect(jentadueto?.treeNumbers).toBeUndefined();
+    // Descriptor keeps the real tree number; the @-pointer is filtered out.
+    expect(metformin?.treeNumbers).toEqual(['D02.078.370.141.450']);
+  });
+
   it('skips exact MeSH search for tagged queries and omits details when requested', async () => {
     mockESearch.mockResolvedValue({ idList: ['68009369'] });
     mockESummary.mockResolvedValue({

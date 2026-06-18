@@ -74,7 +74,10 @@ function extractTreeNumbers(items: Record<string, unknown>[]): string[] {
     const structItems = ensureArray(struct.Item) as Record<string, unknown>[];
     const treeItem = findItem(structItems, 'TreeNum');
     const val = treeItem ? getText(treeItem) : '';
-    if (val) treeNums.push(val);
+    // Supplementary Concept Records (SCRs) surface a non-navigable mapped-heading
+    // pointer (e.g. "@218176") in the same TreeNum field. Drop it so treeNumbers
+    // holds only real, navigable MeSH tree numbers. (#76)
+    if (val && !val.startsWith('@')) treeNums.push(val);
   }
   return treeNums;
 }
@@ -151,7 +154,12 @@ export const lookupMeshTool = tool('pubmed_lookup_mesh', {
                 'NCBI Entrez UID for this record — the join key for E-utilities (eSummary/eFetch db=mesh).',
               ),
             name: z.string().describe('Descriptor name'),
-            treeNumbers: z.array(z.string()).optional().describe('MeSH tree numbers'),
+            treeNumbers: z
+              .array(z.string())
+              .optional()
+              .describe(
+                'Navigable MeSH tree numbers (e.g. "D02.078.370.141.450"). Omitted for supplementary concept records (SCRs), which map to a heading rather than occupying a tree position.',
+              ),
             scopeNote: z.string().optional().describe('Scope note'),
             entryTerms: z.array(z.string()).optional().describe('Synonyms / entry terms'),
           })
