@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.6](changelog/2.9.x/2.9.6.md) — 2026-06-18
+
+Output cleanups: convert_ids accepts mixed PMC/bare-digit batches; europepmc_search and fetch_articles strip leaked markup and decode entities; europepmc_search splits its silent-rejection diagnosis from its recovery hint; lookup_mesh drops non-navigable SCR tree pointers
+
 ## [2.9.5](changelog/2.9.x/2.9.5.md) — 2026-06-13
 
 Fixes: transient NCBI eutils 500s now reclassify to ServiceUnavailable and retry; pubmed_lookup_mesh returns the canonical MeSH DescriptorUI with a new entrezUid field
