@@ -46,7 +46,7 @@ import {
  */
 const ID_CONVERT_FORMAT_HINTS: Record<string, string> = {
   pmid: 'numeric digits, e.g. "23193287"',
-  pmcid: '"PMC" + digits, e.g. "PMC3531190"',
+  pmcid: '"PMC" + digits or bare digits, e.g. "PMC3531190" or "3531190"',
   doi: 'starts with "10.", e.g. "10.1093/nar/gks1195"',
 };
 
@@ -257,8 +257,19 @@ export class NcbiService {
     idtype?: string,
     options?: NcbiCallOptions,
   ): Promise<IdConvertRecord[]> {
+    // The PMC ID Converter rejects an entire batch (HTTP 400) when PMC-prefixed
+    // and bare-digit PMCIDs are mixed, even though it accepts each form on its
+    // own. Canonicalize bare digits to "PMC"+digits so every pmcid batch is
+    // homogeneous and resolves like a same-format one. (#73)
+    const normalizedIds =
+      idtype === 'pmcid'
+        ? ids.map((id) => {
+            const trimmed = id.trim();
+            return /^\d+$/.test(trimmed) ? `PMC${trimmed}` : trimmed;
+          })
+        : ids;
     const params: NcbiRequestParams = {
-      ids: ids.join(','),
+      ids: normalizedIds.join(','),
       format: 'json',
       ...(idtype && { idtype }),
     };

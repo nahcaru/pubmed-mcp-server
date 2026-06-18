@@ -522,6 +522,34 @@ describe('NcbiService.idConvert', () => {
       code: JsonRpcErrorCode.ServiceUnavailable,
     });
   });
+
+  it('canonicalizes bare-digit PMCIDs to PMC-prefixed before the request (#73)', async () => {
+    const { service, mockApiClient } = createIdConvertService();
+    (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({ records: [] }),
+    );
+
+    // Mixed batch — one prefixed, one bare, one with surrounding whitespace. The
+    // upstream 400s on a mixed batch unless every PMCID is in the same form.
+    await service.idConvert(['PMC3531190', '3531190', ' 7925010 '], 'pmcid');
+
+    const params = (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[1];
+    expect(params?.ids).toBe('PMC3531190,PMC3531190,PMC7925010');
+  });
+
+  it('does not PMC-prefix non-pmcid id types (#73)', async () => {
+    const { service, mockApiClient } = createIdConvertService();
+    (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mockResolvedValue(
+      JSON.stringify({ records: [] }),
+    );
+
+    await service.idConvert(['23193287', '12345'], 'pmid');
+
+    const params = (mockApiClient.makeExternalRequest as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[1];
+    expect(params?.ids).toBe('23193287,12345');
+  });
 });
 
 describe('NcbiService retry behavior', () => {
