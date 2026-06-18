@@ -153,15 +153,26 @@ export class EuropePmcService {
       parsed.request === undefined &&
       parsed.resultList === undefined
     ) {
-      const rejectionHint = params.sort
-        ? `Europe PMC silently rejected the request. Most likely cause: invalid sort field "${params.sort}". Use a documented sort like \`P_PDATE_D desc\`, \`CITED desc\`, \`AUTH_FIRST asc\`, or \`PUB_YEAR desc\`, or omit \`sort\` for relevance ranking.`
-        : 'Europe PMC silently rejected the request (empty envelope, no hitCount). Verify query syntax, sort field, and cursorMark.';
-      throw validationError(rejectionHint, {
+      // Split the diagnosis (message) from the actionable next step (recovery
+      // hint). The framework mirrors data.recovery.hint into content[], so
+      // passing one string as both renders byte-identical Error:/Recovery:
+      // blocks — the same distinct message-vs-hint shape as the errMsg throw
+      // ~20 lines up. (#75)
+      const { message, hint } = params.sort
+        ? {
+            message: `Europe PMC silently rejected the request — most likely the invalid sort field "${params.sort}".`,
+            hint: 'Use a documented sort (`P_PDATE_D desc`, `CITED desc`, `AUTH_FIRST asc`, or `PUB_YEAR desc`), or omit `sort` for relevance ranking.',
+          }
+        : {
+            message: 'Europe PMC silently rejected the request — empty envelope with no hitCount.',
+            hint: 'Verify the query syntax, sort field, and cursorMark, then retry.',
+          };
+      throw validationError(message, {
         reason: 'europepmc_invalid_input',
         ...(params.sort && { sort: params.sort }),
         ...(params.cursorMark && params.cursorMark !== '*' && { cursorMark: params.cursorMark }),
         responseSnippet: text.substring(0, 200),
-        recovery: { hint: rejectionHint },
+        recovery: { hint },
       });
     }
 

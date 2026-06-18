@@ -155,35 +155,44 @@ describe('EuropePmcService.search', () => {
     });
   });
 
-  it('throws with a sort-specific hint when EPMC silently rejects an invalid sort', async () => {
+  it('splits diagnosis (message) from recovery hint on invalid sort — not byte-identical (#75)', async () => {
     // EPMC returns a {version}-only envelope when sort is invalid — no hitCount,
     // no request echo, no resultList. Without detection this falls through to
     // hitCount: 0 and the caller thinks the query had no matches.
     mockFetchWithTimeout.mockResolvedValue(jsonResponse({ version: '6.10' }));
     const service = makeService();
-    await expect(
-      service.search({ query: 'cancer', sort: 'FIRST_PIDATE desc' }),
-    ).rejects.toMatchObject({
-      data: {
-        reason: 'europepmc_invalid_input',
-        sort: 'FIRST_PIDATE desc',
-        recovery: { hint: expect.stringContaining('FIRST_PIDATE desc') },
-      },
-    });
+    const err = (await service
+      .search({ query: 'cancer', sort: 'FIRST_PIDATE desc' })
+      .catch((e: unknown) => e)) as {
+      message: string;
+      data: { reason: string; sort: string; recovery: { hint: string } };
+    };
+
+    expect(err.data.reason).toBe('europepmc_invalid_input');
+    expect(err.data.sort).toBe('FIRST_PIDATE desc');
+    // Message carries the diagnosis (names the bad field); hint carries the next step.
+    expect(err.message).toContain('FIRST_PIDATE desc');
+    expect(err.data.recovery.hint).toContain('documented sort');
+    // The bug (#75): message and recovery hint were the same string, rendering
+    // identical Error:/Recovery: blocks. They must differ now.
+    expect(err.data.recovery.hint).not.toBe(err.message);
   });
 
-  it('throws a generic hint when the empty-envelope arrives without a sort param', async () => {
+  it('splits diagnosis from recovery hint on the no-sort empty envelope (#75)', async () => {
     mockFetchWithTimeout.mockResolvedValue(jsonResponse({ version: '6.10' }));
     const service = makeService();
-    await expect(
-      service.search({ query: 'cancer', cursorMark: 'BAD_CURSOR' }),
-    ).rejects.toMatchObject({
-      data: {
-        reason: 'europepmc_invalid_input',
-        cursorMark: 'BAD_CURSOR',
-        recovery: { hint: expect.stringContaining('silently rejected') },
-      },
-    });
+    const err = (await service
+      .search({ query: 'cancer', cursorMark: 'BAD_CURSOR' })
+      .catch((e: unknown) => e)) as {
+      message: string;
+      data: { reason: string; cursorMark: string; recovery: { hint: string } };
+    };
+
+    expect(err.data.reason).toBe('europepmc_invalid_input');
+    expect(err.data.cursorMark).toBe('BAD_CURSOR');
+    expect(err.message).toContain('silently rejected');
+    expect(err.data.recovery.hint).toContain('cursorMark');
+    expect(err.data.recovery.hint).not.toBe(err.message);
   });
 
   it('surfaces EPMC `errMsg` (e.g. empty query) instead of falling through to 0 hits', async () => {
