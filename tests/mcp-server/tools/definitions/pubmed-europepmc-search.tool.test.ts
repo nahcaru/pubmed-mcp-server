@@ -139,6 +139,32 @@ describe('pubmedEuropepmcSearchTool', () => {
     expect(getEnrichment(ctx).notice).toMatch(/No results/);
   });
 
+  it('normalizes abstractSnippet: strips JATS/HTML, decodes entities, drops soft hyphens (#74)', async () => {
+    mockSearch.mockResolvedValue({
+      hits: [
+        {
+          id: '4',
+          source: 'MED',
+          title: 't',
+          abstractText: '<h4>Background: </h4> Emergency &amp; clini­cal triage &lt;LLMs&gt;',
+        },
+      ],
+      hitCount: 1,
+      cursorMark: '*',
+      query: 'foo',
+    });
+    const ctx = createMockContext();
+    const result = await pubmedEuropepmcSearchTool.handler(
+      pubmedEuropepmcSearchTool.input.parse({ query: 'foo' }),
+      ctx,
+    );
+    const snippet = result.hits[0]?.abstractSnippet ?? '';
+    expect(snippet).not.toContain('<h4>');
+    expect(snippet).not.toContain('&amp;');
+    expect(snippet).not.toContain('­');
+    expect(snippet).toBe('Background: Emergency & clinical triage <LLMs>');
+  });
+
   it('emits an epmcUrl per hit', async () => {
     mockSearch.mockResolvedValue({
       hits: [{ id: 'PPR9', source: 'PPR' }],

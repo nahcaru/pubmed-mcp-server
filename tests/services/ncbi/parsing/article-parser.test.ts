@@ -189,6 +189,23 @@ describe('extractGrants', () => {
     expect(result[0]?.grantId).toBe('R01-CA12345');
     expect(result[0]?.agency).toBe('NCI NIH HHS');
   });
+
+  it('decodes NCBI double-encoded entities in grant fields (#74)', () => {
+    // EFetch ships `CSR&amp;amp;D`; the XML parser decodes one level to the
+    // literal `CSR&amp;D`, so extractGrants must decode the residual entity.
+    const grantList: XmlGrantList = {
+      Grant: [
+        {
+          GrantID: { '#text': 'CSR&amp;D I01CX002210' },
+          Agency: { '#text': 'Blood &amp; Marrow Transplant' },
+          Country: { '#text': 'United States' },
+        },
+      ],
+    };
+    const result = extractGrants(grantList);
+    expect(result[0]?.grantId).toBe('CSR&D I01CX002210');
+    expect(result[0]?.agency).toBe('Blood & Marrow Transplant');
+  });
 });
 
 describe('extractDoi', () => {

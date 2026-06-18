@@ -21,6 +21,7 @@ import {
   EUROPEPMC_DEFAULT_SOURCES,
   type EuropePmcSource,
 } from '@/services/europe-pmc/types.js';
+import { toDisplayText } from '@/services/ncbi/parsing/text-helpers.js';
 import {
   conceptMeta,
   EDAM_DATABASE_SEARCH,
@@ -127,7 +128,7 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
               .string()
               .optional()
               .describe(
-                'First few hundred characters of the abstract when `resultType: "core"` is requested',
+                'First few hundred characters of the abstract as display-ready plain text — JATS/HTML markup stripped and HTML entities decoded — when `resultType: "core"` is requested',
               ),
             citedByCount: z.number().optional().describe('Citation count reported by Europe PMC'),
             epmcUrl: z.string().describe('Europe PMC article URL'),
@@ -190,26 +191,32 @@ export const pubmedEuropepmcSearchTool = tool('pubmed_europepmc_search', {
       ...(ctx.signal && { signal: ctx.signal }),
     });
 
-    const hits = result.hits.map((h) => ({
-      source: h.source as 'MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR',
-      epmcId: h.id,
-      ...(h.title && { title: h.title }),
-      ...(h.authorString && { authors: h.authorString }),
-      ...(h.journalTitle && { journal: h.journalTitle }),
-      ...(h.pubYear && { pubYear: h.pubYear }),
-      ...(h.firstPublicationDate && { firstPublicationDate: h.firstPublicationDate }),
-      ...(h.pmid && { pmid: h.pmid }),
-      ...(h.pmcid && { pmcId: h.pmcid }),
-      ...(h.doi && { doi: h.doi }),
-      ...(h.isOpenAccess !== undefined && { isOpenAccess: h.isOpenAccess === 'Y' }),
-      ...(h.inPMC !== undefined && { hasFullTextXml: h.inPMC === 'Y' }),
-      ...(h.abstractText && {
-        abstractSnippet:
-          h.abstractText.length > 400 ? `${h.abstractText.slice(0, 400)}…` : h.abstractText,
-      }),
-      ...(typeof h.citedByCount === 'number' && { citedByCount: h.citedByCount }),
-      epmcUrl: `https://europepmc.org/article/${h.source}/${h.id}`,
-    }));
+    const hits = result.hits.map((h) => {
+      // EPMC returns abstractText as a raw JSON string carrying JATS/HTML markup,
+      // un-decoded entities, and soft hyphens (no XML parser runs on it). Clean it
+      // to display-ready plain text before truncating, so the snippet budget is
+      // spent on text and soft hyphens don't corrupt downstream token matching. (#74)
+      const snippet = h.abstractText ? toDisplayText(h.abstractText) : '';
+      return {
+        source: h.source as 'MED' | 'PMC' | 'PPR' | 'PAT' | 'AGR',
+        epmcId: h.id,
+        ...(h.title && { title: h.title }),
+        ...(h.authorString && { authors: h.authorString }),
+        ...(h.journalTitle && { journal: h.journalTitle }),
+        ...(h.pubYear && { pubYear: h.pubYear }),
+        ...(h.firstPublicationDate && { firstPublicationDate: h.firstPublicationDate }),
+        ...(h.pmid && { pmid: h.pmid }),
+        ...(h.pmcid && { pmcId: h.pmcid }),
+        ...(h.doi && { doi: h.doi }),
+        ...(h.isOpenAccess !== undefined && { isOpenAccess: h.isOpenAccess === 'Y' }),
+        ...(h.inPMC !== undefined && { hasFullTextXml: h.inPMC === 'Y' }),
+        ...(snippet && {
+          abstractSnippet: snippet.length > 400 ? `${snippet.slice(0, 400)}…` : snippet,
+        }),
+        ...(typeof h.citedByCount === 'number' && { citedByCount: h.citedByCount }),
+        epmcUrl: `https://europepmc.org/article/${h.source}/${h.id}`,
+      };
+    });
 
     // Europe PMC accepts a `P_PDATE_D` sort but silently ignores it for
     // preprint-only (PPR) result sets — preprints have no populated publication

@@ -32,6 +32,7 @@ import type {
   XmlPublicationTypeList,
   XmlPubmedArticle,
 } from '../types.js';
+import { decodeHtmlEntities } from './text-helpers.js';
 import { ensureArray, getAttribute, getText } from './xml-helpers.js';
 
 /**
@@ -193,10 +194,14 @@ export function extractGrants(grantListXml?: XmlGrantList): ParsedGrant[] {
   if (!grantListXml) return [];
   const grants = ensureArray(grantListXml.Grant);
   return grants.map((g: XmlGrant): ParsedGrant => {
-    const grantId = getText(g.GrantID);
-    const acronym = getText(g.Acronym);
-    const agency = getText(g.Agency);
-    const country = getText(g.Country);
+    // NCBI double-encodes ampersands in grant identifiers and agencies
+    // (`CSR&amp;amp;D`), so the XML parser's single entity-decode pass still
+    // leaves a literal `&amp;`. Decode once more here to surface display-ready
+    // text (`CSR&D`) rather than making every caller re-sanitize. (#74)
+    const grantId = decodeHtmlEntities(getText(g.GrantID));
+    const acronym = decodeHtmlEntities(getText(g.Acronym));
+    const agency = decodeHtmlEntities(getText(g.Agency));
+    const country = decodeHtmlEntities(getText(g.Country));
     return {
       ...(grantId && { grantId }),
       ...(acronym && { acronym }),
