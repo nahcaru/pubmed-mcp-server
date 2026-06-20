@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.7](changelog/2.9.x/2.9.7.md) — 2026-06-20
+
+Adopt mcp-ts-core 0.10.9: devcheck gains a Dependency Specifiers guard (floating latest/*/dist-tags) and plugin-manifest checks in lint:packaging; fresh-scaffold git guards; 14 skills re-synced; dependency refresh
+
 ## [2.9.6](changelog/2.9.x/2.9.6.md) — 2026-06-18
 
 Output cleanups: convert_ids accepts mixed PMC/bare-digit batches; europepmc_search and fetch_articles strip leaked markup and decode entities; europepmc_search splits its silent-rejection diagnosis from its recovery hint; lookup_mesh drops non-navigable SCR tree pointers
