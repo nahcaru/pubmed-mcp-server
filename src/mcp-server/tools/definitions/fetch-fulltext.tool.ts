@@ -92,6 +92,47 @@ function applyPmcFilters(article: ParsedPmcArticle, filters: PmcFilterOptions): 
   return out;
 }
 
+/**
+ * True when a `sections` filter removed every body section from an article that
+ * actually had sections upstream — the signal that the requested headings
+ * matched nothing, as opposed to the article genuinely shipping no body. Only
+ * the `sections` filter can zero a non-empty list: `maxSections` carries a
+ * `.min(1)` floor, so it never reduces to zero. (#80)
+ */
+function isSectionFilterMiss(
+  before: ParsedPmcArticle,
+  after: ParsedPmcArticle,
+  sectionFilter: string[] | undefined,
+): boolean {
+  return (
+    Boolean(sectionFilter?.length) && before.sections.length > 0 && after.sections.length === 0
+  );
+}
+
+/** Pick the best human-readable identifier for an article whose section filter
+ *  missed, for the recovery notice. Treats empty strings as absent — EPMC-only
+ *  records carry an empty `pmcId`. */
+function articleSectionMissId(a: {
+  pmcId?: string | undefined;
+  pmid?: string | undefined;
+  doi?: string | undefined;
+  epmcId?: string | undefined;
+}): string {
+  return [a.pmcId, a.pmid, a.doi, a.epmcId].find((v) => v && v.length > 0) ?? 'article';
+}
+
+/**
+ * Compose the single recovery notice for `sections`-filter misses. Names the
+ * requested terms and the affected article id(s) so the agent can distinguish a
+ * filtered-empty body from one absent upstream, and points at the recovery. (#80)
+ */
+function buildSectionFilterMissNotice(affectedIds: string[], sectionFilter: string[]): string {
+  const terms = sectionFilter.join(', ');
+  const subject =
+    affectedIds.length === 1 ? `article ${affectedIds[0]}` : `articles ${affectedIds.join(', ')}`;
+  return `No body sections matched the requested section filter (${terms}) for ${subject}. The full text was retrieved but every body section was filtered out. Retry without \`sections\`, or filter on broader headings such as Introduction, Methods, Results, or Discussion.`;
+}
+
 // ─── Schemas ─────────────────────────────────────────────────────────────────
 
 const SubsectionSchema = z
@@ -422,6 +463,18 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       ),
   }),
 
+  // Recovery guidance when a `sections` filter removes every body section from
+  // an article that has one — agent-facing context surfaced via ctx.enrich.notice()
+  // to structuredContent and content[]; absent when no filter ran or sections matched. (#80)
+  enrichment: {
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'Optional guidance when a `sections` filter removed every body section — names the requested section terms and the affected article id(s), and suggests retrying without `sections` or using broader headings. Absent when no section filter was applied or sections matched.',
+      ),
+  },
+
   async handler(input, ctx) {
     ctx.log.info('Executing pubmed_fetch_fulltext', {
       hasPmcids: !!input.pmcids,
@@ -444,6 +497,10 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
     // DOI hints captured during pmids→pmcid routing so PMC-misses on the pmids
     // branch can still reach Unpaywall without re-fetching from PubMed metadata.
     const pmidContext = new Map<string, PmidCandidate>();
+    // Ids of returned articles whose `sections` filter removed every body
+    // section — collected across the PMC and EPMC stages to drive one recovery
+    // notice via ctx.enrich.notice (#80).
+    const sectionFilterMisses: string[] = [];
 
     const idType: 'pmid' | 'pmcid' | 'doi' = input.pmids ? 'pmid' : input.pmcids ? 'pmcid' : 'doi';
 
@@ -580,9 +637,14 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
           throw new Error('PMC EFetch response missing pmc-articleset wrapper');
         }
 
-        const parsed = findAll(articleSet, 'article')
-          .map(parsePmcArticle)
-          .map((a) => applyPmcFilters(a, input));
+        const parsed = findAll(articleSet, 'article').map((node) => {
+          const before = parsePmcArticle(node);
+          const after = applyPmcFilters(before, input);
+          if (isSectionFilterMiss(before, after, input.sections)) {
+            sectionFilterMisses.push(articleSectionMissId(after));
+          }
+          return after;
+        });
 
         pmcArticles = parsed.map((a) => ({
           source: 'pmc' as const,
@@ -637,6 +699,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
           pmidOutcomes: new Map<string, EpmcCandidateOutcome>(),
           pmcidOutcomes: new Map<string, EpmcCandidateOutcome>(),
           doiOutcomes: new Map<string, EpmcCandidateOutcome>(),
+          sectionFilterMisses: [],
         };
 
     pmcArticles = pmcArticles.concat(epmcOutcomes.articles);
@@ -683,6 +746,7 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
     pmidFallbackCandidates = epmcOutcomes.remainingPmid;
     pmcidFallbackCandidates = epmcOutcomes.remainingPmcid;
     doiCandidates = epmcOutcomes.remainingDoi;
+    sectionFilterMisses.push(...epmcOutcomes.sectionFilterMisses);
 
     // ── Stage 3: Unpaywall fallback ─────────────────────────────────────────
     const unpaywall = getUnpaywallService();
@@ -810,6 +874,10 @@ export const fetchFulltextTool = tool('pubmed_fetch_fulltext', {
       unavailable: unavailable.length,
     });
 
+    if (input.sections?.length && sectionFilterMisses.length > 0) {
+      ctx.enrich.notice(buildSectionFilterMissNotice(sectionFilterMisses, input.sections));
+    }
+
     return {
       articles,
       totalReturned: articles.length,
@@ -898,6 +966,8 @@ interface EpmcStageOutput {
   remainingDoi: DoiCandidate[];
   remainingPmcid: PmcidCandidate[];
   remainingPmid: PmidCandidate[];
+  /** Ids of EPMC-served articles whose `sections` filter removed every body section. */
+  sectionFilterMisses: string[];
 }
 
 /**
@@ -919,6 +989,7 @@ async function runEpmcStage(
     c: C;
     outcome: EpmcCandidateOutcome;
     article?: z.infer<typeof PmcArticleSchema>;
+    sectionFilterMiss?: boolean;
   };
 
   const runOne = async <C>(
@@ -941,7 +1012,12 @@ async function runEpmcStage(
         outcome: { kind: 'no-fulltext', ...(fetched.detail && { detail: fetched.detail }) },
       };
     }
-    return { c, outcome: { kind: 'hit' }, article: fetched.article };
+    return {
+      c,
+      outcome: { kind: 'hit' },
+      article: fetched.article,
+      sectionFilterMiss: fetched.sectionFilterMiss,
+    };
   };
 
   const fetchForPmid = (c: PmidCandidate) => runOne(c, `EXT_ID:"${c.pmid}" AND SRC:MED`, c.pmid);
@@ -964,21 +1040,28 @@ async function runEpmcStage(
   const pmidOutcomes = new Map<string, EpmcCandidateOutcome>();
   const pmcidOutcomes = new Map<string, EpmcCandidateOutcome>();
   const doiOutcomes = new Map<string, EpmcCandidateOutcome>();
+  const sectionFilterMisses: string[] = [];
 
-  for (const { c, outcome, article } of pmidResults) {
+  for (const { c, outcome, article, sectionFilterMiss } of pmidResults) {
     pmidOutcomes.set(c.pmid, outcome);
-    if (article) articles.push(article);
-    else remainingPmid.push(c);
+    if (article) {
+      articles.push(article);
+      if (sectionFilterMiss) sectionFilterMisses.push(articleSectionMissId(article));
+    } else remainingPmid.push(c);
   }
-  for (const { c: pair, outcome, article } of pmcidResults) {
+  for (const { c: pair, outcome, article, sectionFilterMiss } of pmcidResults) {
     pmcidOutcomes.set(pair.normalized, outcome);
-    if (article) articles.push(article);
-    else remainingPmcid.push(pair.c);
+    if (article) {
+      articles.push(article);
+      if (sectionFilterMiss) sectionFilterMisses.push(articleSectionMissId(article));
+    } else remainingPmcid.push(pair.c);
   }
-  for (const { c, outcome, article } of doiResults) {
+  for (const { c, outcome, article, sectionFilterMiss } of doiResults) {
     doiOutcomes.set(c.doi, outcome);
-    if (article) articles.push(article);
-    else remainingDoi.push(c);
+    if (article) {
+      articles.push(article);
+      if (sectionFilterMiss) sectionFilterMisses.push(articleSectionMissId(article));
+    } else remainingDoi.push(c);
   }
 
   return {
@@ -989,6 +1072,7 @@ async function runEpmcStage(
     pmidOutcomes,
     pmcidOutcomes,
     doiOutcomes,
+    sectionFilterMisses,
   };
 }
 
@@ -1027,7 +1111,7 @@ async function searchEpmcSafe(
 }
 
 type EpmcFetchResult =
-  | { kind: 'article'; article: z.infer<typeof PmcArticleSchema> }
+  | { kind: 'article'; article: z.infer<typeof PmcArticleSchema>; sectionFilterMiss: boolean }
   | { kind: 'no-fulltext'; detail?: string }
   | { kind: 'error'; detail: string };
 
@@ -1064,7 +1148,9 @@ async function fetchEpmcArticle(
       return { kind: 'no-fulltext', detail: 'EPMC fullTextXML payload had no <article> element' };
     }
 
-    const parsed = applyPmcFilters(parsePmcArticle(articleNode), args.input);
+    const beforeFilter = parsePmcArticle(articleNode);
+    const parsed = applyPmcFilters(beforeFilter, args.input);
+    const sectionFilterMiss = isSectionFilterMiss(beforeFilter, parsed, args.input.sections);
 
     // `parsePmcArticle` always returns string fields (sometimes empty). Strip
     // empty `pmcId`/`pmcUrl` for EPMC-only records (preprints) so the schema's
@@ -1075,6 +1161,7 @@ async function fetchEpmcArticle(
 
     return {
       kind: 'article',
+      sectionFilterMiss,
       article: {
         source: 'pmc' as const,
         viaSource: 'europepmc' as const,

@@ -3,7 +3,7 @@
  * @module tests/mcp-server/tools/definitions/fetch-fulltext.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockEFetch = vi.fn();
@@ -1409,6 +1409,156 @@ describe('fetchFulltextTool', () => {
           ],
         },
       ]);
+    });
+  });
+
+  describe('section-filter miss notice (issue #80)', () => {
+    it('emits a recovery notice when a sections filter matches no body sections', async () => {
+      // The article has real body sections, but the requested filter matches
+      // none of them — the body comes back empty because of the filter, not an
+      // upstream absence. The article is still returned (not an error).
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC3531190',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3531190/',
+        title: 'Article with real sections',
+        sections: [
+          { title: 'Introduction', text: 'Intro body.' },
+          { title: 'Methods', text: 'Methods body.' },
+        ],
+      });
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [{ article: [] }] }]);
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({
+        pmcids: ['PMC3531190'],
+        sections: ['DefinitelyNotARealSectionName'],
+      });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      // Success behavior preserved: the article is returned with an empty body.
+      expect(result.totalReturned).toBe(1);
+      const article = result.articles[0];
+      expect(article?.source).toBe('pmc');
+      if (article?.source === 'pmc') {
+        expect(article.sections).toEqual([]);
+      }
+
+      const notice = getEnrichment(ctx).notice;
+      expect(notice).toBeDefined();
+      expect(notice).toContain('DefinitelyNotARealSectionName');
+      expect(notice).toContain('PMC3531190');
+      expect(notice).toMatch(/Retry without `sections`/);
+      expect(notice).toMatch(/broader headings/);
+    });
+
+    it('does not emit a notice when the sections filter matches', async () => {
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC3531190',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3531190/',
+        title: 'Article with real sections',
+        sections: [
+          { title: 'Introduction', text: 'Intro body.' },
+          { title: 'Methods', text: 'Methods body.' },
+        ],
+      });
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [{ article: [] }] }]);
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({
+        pmcids: ['PMC3531190'],
+        sections: ['Introduction'],
+      });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(result.totalReturned).toBe(1);
+      const article = result.articles[0];
+      if (article?.source === 'pmc') {
+        expect(article.sections).toEqual([{ title: 'Introduction', text: 'Intro body.' }]);
+      }
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('does not emit a notice when no sections filter is provided', async () => {
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC3531190',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3531190/',
+        title: 'Article',
+        sections: [{ title: 'Introduction', text: 'Intro body.' }],
+      });
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [{ article: [] }] }]);
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ pmcids: ['PMC3531190'] });
+      await fetchFulltextTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('does not emit a notice when the article had no body sections upstream', async () => {
+      // Empty body is an upstream absence, not a filter miss — no notice fires.
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC3531190',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3531190/',
+        title: 'Metadata-only article',
+        sections: [],
+      });
+      mockEFetch.mockResolvedValue([{ 'pmc-articleset': [{ article: [] }] }]);
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({
+        pmcids: ['PMC3531190'],
+        sections: ['Introduction'],
+      });
+      await fetchFulltextTool.handler(input, ctx);
+
+      expect(getEnrichment(ctx).notice).toBeUndefined();
+    });
+
+    it('emits the notice for an EPMC-served article whose sections filter misses', async () => {
+      // PMID has no PMC counterpart, recovers via Europe PMC fullTextXML, and the
+      // requested sections filter empties its body — the miss must be detected on
+      // the EPMC stage too, not only the PMC EFetch stage.
+      mockGetEpmcService.mockReturnValue({
+        search: mockEpmcSearch,
+        fullTextXml: mockEpmcFullTextXml,
+        parseFullTextXml: mockEpmcParseFullTextXml,
+      });
+      mockIdConvert.mockResolvedValue([{ 'requested-id': '42', pmid: '42' }]);
+      mockEpmcSearch.mockResolvedValue({
+        hits: [{ id: '42', source: 'MED', pmid: '42', pmcid: 'PMC42', doi: '10.1/x' }],
+        hitCount: 1,
+        cursorMark: '*',
+      });
+      mockEpmcFullTextXml.mockResolvedValue({
+        kind: 'found',
+        xml: '<article/>',
+        epmcId: 'PMC42',
+        source: 'MED',
+      });
+      mockEpmcParseFullTextXml.mockReturnValue({ article: [{ body: [] }] });
+      mockParsePmcArticle.mockReturnValue({
+        pmcId: 'PMC42',
+        pmcUrl: 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC42/',
+        title: 'EPMC-served article',
+        sections: [{ title: 'Background', text: 'Body' }],
+      });
+
+      const ctx = createMockContext();
+      const input = fetchFulltextTool.input.parse({ pmids: ['42'], sections: ['NoSuchSection'] });
+      const result = await fetchFulltextTool.handler(input, ctx);
+
+      expect(result.totalReturned).toBe(1);
+      const article = result.articles[0];
+      expect(article?.source).toBe('pmc');
+      if (article?.source === 'pmc') {
+        expect(article.viaSource).toBe('europepmc');
+        expect(article.sections).toEqual([]);
+      }
+
+      const notice = getEnrichment(ctx).notice;
+      expect(notice).toBeDefined();
+      expect(notice).toContain('NoSuchSection');
+      expect(notice).toContain('PMC42');
     });
   });
 
