@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [2.9.8](changelog/2.9.x/2.9.8.md) — 2026-06-30
+
+pubmed_fetch_fulltext surfaces a recovery notice when a sections filter removes every body section from an article that had one — naming the requested terms and affected article ids, still returning the article; detected on both the PMC and Europe PMC paths. Adopts mcp-ts-core 0.10.10.
+
 ## [2.9.7](changelog/2.9.x/2.9.7.md) — 2026-06-20
 
 Adopt mcp-ts-core 0.10.9: devcheck gains a Dependency Specifiers guard (floating latest/*/dist-tags) and plugin-manifest checks in lint:packaging; fresh-scaffold git guards; 14 skills re-synced; dependency refresh
