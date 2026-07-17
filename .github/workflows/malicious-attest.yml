@@ -1,0 +1,97 @@
+# TAMPERED workflow — Exp 3 attack scenario (spec 実験詳細設計.md §Exp 3, Step 2).
+#
+# This models the AgentCy R3 threat: "Since developers control the pipeline,
+# they can alter or weaken the profile." A developer copies the registry
+# workflow, strips the Semgrep/Trivy security gate (so ANY code attests), and
+# renames the file. It still produces a real Sigstore attestation over the SBOM.
+#
+# The defense: the attestation's OIDC token binds job_workflow_ref to THIS
+# file's path (".github/workflows/malicious-attest.yml"), which is embedded in
+# the Fulcio certificate. The registry verifier requires
+# job_workflow_ref to end in ".github/workflows/mcp-registry-attest.yml"
+# (TRUSTED_WORKFLOW_SUFFIX), so this attestation is rejected at verification
+# time — workflow_ref_valid = False — even though it is cryptographically valid.
+#
+# The SBOM is still generated (benign step, not the security gate) so that the
+# ONLY verifier check that flips is workflow_ref_valid — isolating the
+# profile-integrity mechanism in the results table.
+name: Bypass Scan (tampered profile)
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  attestations: write
+
+jobs:
+  bypass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Security gate REMOVED. The attacker fakes a clean scan.
+      - name: "Fake" scan
+        run: echo "all clear"  # Semgrep / Trivy gate intentionally skipped
+
+      # SBOM still generated so the attestation subject digest matches — the
+      # tampered scenario must fail ONLY on workflow_ref_valid, not digest_match.
+      - name: Generate SBOM (Trivy)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      - name: Compute artifact digest
+        run: |
+          find . -path ./.git -prune -o -type f \
+            \( -name "*.py" -o -name "*.ts" -o -name "*.js" \) -print \
+            | sort | xargs -r sha256sum | sha256sum \
+            | awk '{print $1}' > artifact.digest
+
+      # Real Sigstore attestation from a tampered pipeline. The OIDC token binds:
+      #   job_workflow_ref: <owner>/<repo>/.github/workflows/malicious-attest.yml@<ref>
+      - name: Generate attestation with weakened profile
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: sbom.cdx.json
+
+      - name: Copy attestation bundle
+        if: steps.attest.outcome == 'success'
+        run: cp "${{ steps.attest.outputs.bundle-path }}" attestation.sigstore.json
+
+      - name: Record metrics
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, os, time
+          out = {
+              "repo": os.environ["GITHUB_REPOSITORY"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "sha": os.environ["GITHUB_SHA"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "workflow_ref": os.environ["GITHUB_WORKFLOW_REF"],
+              "tampered": True,
+              "security_gate": "removed",
+              "recorded_epoch": int(time.time()),
+              "attestation_bundle_path": "${{ steps.attest.outputs.bundle-path }}",
+          }
+          json.dump(out, open("metrics.json", "w"), indent=2)
+          EOF
+          cat metrics.json
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-registry-malicious-results
+          path: |
+            metrics.json
+            sbom.cdx.json
+            artifact.digest
+            attestation.sigstore.json
+          if-no-files-found: warn
