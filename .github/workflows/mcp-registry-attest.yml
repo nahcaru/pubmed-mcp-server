@@ -1,0 +1,162 @@
+# MCP Registry Security Attestation (Exp 2 PoC)
+# Injected into each fork by setup_forks.py. Spec: Vault 実験詳細設計.md §Exp 2.
+#
+# Deviations from the spec's sketch (documented in the Exp 2 README):
+#   - returntocorp/semgrep-action@v1 is archived -> `pip install semgrep` + CLI.
+#   - Trivy runs twice: SBOM generation and the HIGH/CRITICAL gate are separate
+#     invocations (one invocation cannot both emit CycloneDX and gate cleanly).
+#   - actions/attest@v1 with a SLSA predicate-type requires a hand-built
+#     predicate; actions/attest-build-provenance generates it from the OIDC
+#     token, which is exactly what the experiment measures -> used instead.
+#   - Scan steps use continue-on-error so reports/metrics are always uploaded
+#     for FP triage; an explicit gate step enforces "no attestation on failure".
+#   - workflow_dispatch trigger added so measurement runs can be repeated.
+name: MCP Registry Security Attestation
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  id-token: write      # OIDC token issuance
+  contents: read
+  attestations: write  # GitHub Attestations API
+
+jobs:
+  security-scan-and-attest:
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-digest: ${{ steps.hash.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record scan start
+        id: t0
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      # 1. SAST: Semgrep (gate)
+      - name: Run Semgrep (SAST)
+        id: semgrep
+        continue-on-error: true
+        run: |
+          pipx install semgrep
+          semgrep scan \
+            --config p/secrets --config p/python --config p/javascript \
+            --config p/owasp-top-ten \
+            --error \
+            --json --output semgrep-report.json
+
+      - name: Count Semgrep findings
+        id: semgrep_count
+        if: always()
+        run: |
+          n=$(python3 -c "import json;print(len(json.load(open('semgrep-report.json'))['results']))" 2>/dev/null || echo -1)
+          echo "findings=$n" >> "$GITHUB_OUTPUT"
+
+      # 2a. SBOM: Trivy (CycloneDX)
+      - name: Generate SBOM (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          format: cyclonedx
+          output: sbom.cdx.json
+
+      # 2b. SCA gate: Trivy vulnerability scan, HIGH/CRITICAL fail
+      - name: Run Trivy (SCA gate)
+        id: trivy
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scanners: vuln
+          format: json
+          output: trivy-report.json
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Count Trivy findings
+        id: trivy_count
+        if: always()
+        run: |
+          n=$(python3 -c "
+          import json
+          r = json.load(open('trivy-report.json'))
+          print(sum(len(t.get('Vulnerabilities') or []) for t in r.get('Results') or []))
+          " 2>/dev/null || echo -1)
+          echo "findings=$n" >> "$GITHUB_OUTPUT"
+
+      # 3. Artifact digest (Deployment Gap reference value, Exp 5)
+      - name: Compute artifact digest
+        id: hash
+        run: |
+          find . -path ./.git -prune -o -type f \
+            \( -name "*.py" -o -name "*.ts" -o -name "*.js" \) -print \
+            | sort | xargs -r sha256sum | sha256sum \
+            | awk '{print $1}' > artifact.digest
+          echo "digest=$(cat artifact.digest)" >> "$GITHUB_OUTPUT"
+
+      # Gate: no attestation unless both scanners passed
+      - name: Security gate
+        id: gate
+        run: |
+          echo "semgrep=${{ steps.semgrep.outcome }} trivy=${{ steps.trivy.outcome }}"
+          [ "${{ steps.semgrep.outcome }}" = "success" ] && [ "${{ steps.trivy.outcome }}" = "success" ]
+
+      # 4. Attestation (GitHub native, Sigstore-signed via Actions OIDC)
+      - name: Generate attestation
+        id: attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: sbom.cdx.json
+        # The OIDC token binds automatically:
+        #   iss: https://token.actions.githubusercontent.com
+        #   job_workflow_ref: <owner>/<repo>/.github/workflows/mcp-registry-attest.yml@<ref>
+
+      - name: Record attestation end
+        id: t1
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      # 5. Metrics (always uploaded, even when the gate fails)
+      - name: Record metrics
+        if: always()
+        run: |
+          python3 - <<'EOF'
+          import json, os, time
+          out = {
+              "repo": os.environ["GITHUB_REPOSITORY"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "sha": os.environ["GITHUB_SHA"],
+              "scan_start_epoch": int("${{ steps.t0.outputs.epoch }}" or 0),
+              "attest_end_epoch": int("${{ steps.t1.outputs.epoch }}" or 0),
+              "recorded_epoch": int(time.time()),
+              "semgrep_outcome": "${{ steps.semgrep.outcome }}",
+              "semgrep_findings": int("${{ steps.semgrep_count.outputs.findings }}" or -1),
+              "trivy_outcome": "${{ steps.trivy.outcome }}",
+              "trivy_findings": int("${{ steps.trivy_count.outputs.findings }}" or -1),
+              "gate_passed": "${{ steps.gate.outcome }}" == "success",
+              "digest": "${{ steps.hash.outputs.digest }}",
+              "sbom_size_bytes": os.path.getsize("sbom.cdx.json") if os.path.exists("sbom.cdx.json") else -1,
+              "attestation_bundle_path": "${{ steps.attest.outputs.bundle-path }}",
+          }
+          json.dump(out, open("metrics.json", "w"), indent=2)
+          EOF
+          cat metrics.json
+
+      - name: Copy attestation bundle
+        if: steps.attest.outcome == 'success'
+        run: cp "${{ steps.attest.outputs.bundle-path }}" attestation.sigstore.json
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcp-registry-attest-results
+          path: |
+            metrics.json
+            sbom.cdx.json
+            semgrep-report.json
+            trivy-report.json
+            artifact.digest
+            attestation.sigstore.json
+          if-no-files-found: warn
