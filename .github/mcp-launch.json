@@ -1,0 +1,13 @@
+{
+  "setup": [
+    "npx -y bun install",
+    "npx -y bun run build"
+  ],
+  "command": "node",
+  "args": [
+    "dist/index.js"
+  ],
+  "env": {
+    "MCP_TRANSPORT_TYPE": "stdio"
+  }
+}
