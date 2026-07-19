@@ -1,16 +1,15 @@
-# MCP Registry Security Attestation (Exp 2 PoC)
-# Injected into each fork by setup_forks.py. Spec: Vault 実験詳細設計.md §Exp 2.
+# MCP Registry Security Attestation (Exp 2 PoC + Exp 5 tools-hash extension)
+# Injected into each fork by exp5's setup_tools_hash.py. Spec: Vault
+# 実験詳細設計.md §Exp 2 / §Exp 5.
 #
-# Deviations from the spec's sketch (documented in the Exp 2 README):
-#   - returntocorp/semgrep-action@v1 is archived -> `pip install semgrep` + CLI.
-#   - Trivy runs twice: SBOM generation and the HIGH/CRITICAL gate are separate
-#     invocations (one invocation cannot both emit CycloneDX and gate cleanly).
-#   - actions/attest@v1 with a SLSA predicate-type requires a hand-built
-#     predicate; actions/attest-build-provenance generates it from the OIDC
-#     token, which is exactly what the experiment measures -> used instead.
-#   - Scan steps use continue-on-error so reports/metrics are always uploaded
-#     for FP triage; an explicit gate step enforces "no attestation on failure".
-#   - workflow_dispatch trigger added so measurement runs can be repeated.
+# Identical to Exp 2's template except for the Exp 5 additions (steps 3b/3c):
+# after the scan/SBOM/digest steps — so the scan surface and source digest are
+# untouched by server build artifacts — the server is launched over stdio per
+# .github/mcp-launch.json, its canonical tools/list hash is computed by
+# .github/scripts/mcp_tools_hash.py, and the hash is embedded into the SBOM as
+# CycloneDX custom properties (mcp:tools_hash et al.) BEFORE attestation, so
+# the signed attestation covers the tools manifest. Launch failure does not
+# block the gate: CI capture coverage is itself an Exp 5 result.
 name: MCP Registry Security Attestation
 on:
   push:
@@ -108,6 +107,53 @@ jobs:
             | awk '{print $1}' > artifact.digest
           echo "digest=$(cat artifact.digest)" >> "$GITHUB_OUTPUT"
 
+      # 3b. Exp 5: canonical tools/list hash of the *attested* code. Runs
+      # after the digest so npm/uv build artifacts never enter the scans or
+      # the source digest. Best-effort (continue-on-error).
+      - name: Compute tools hash
+        id: tools_hash
+        continue-on-error: true
+        timeout-minutes: 20
+        run: |
+          pipx install uv || true
+          python3 -m venv /tmp/mcp-hash-env
+          /tmp/mcp-hash-env/bin/pip install -q mcp
+          /tmp/mcp-hash-env/bin/python .github/scripts/mcp_tools_hash.py \
+            --launch .github/mcp-launch.json \
+            --output tools-hash.json
+
+      # 3c. Exp 5: embed the hash into the SBOM BEFORE attestation, so the
+      # Sigstore bundle (whose subject is the SBOM) covers the tools manifest.
+      - name: Embed tools hash in SBOM
+        id: sbom_embed
+        if: always()
+        run: |
+          python3 - <<'PYEOF' >> "$GITHUB_OUTPUT"
+          import json, os
+          hash_val = count = None
+          try:
+              th = json.load(open("tools-hash.json"))
+              hash_val, count = th.get("tools_hash"), th.get("tool_count")
+          except Exception:
+              pass
+          if hash_val and os.path.exists("sbom.cdx.json"):
+              sbom = json.load(open("sbom.cdx.json"))
+              meta = sbom.setdefault("metadata", {})
+              props = [p for p in meta.get("properties") or []
+                       if not str(p.get("name", "")).startswith("mcp:")]
+              props += [
+                  {"name": "mcp:tools_hash", "value": hash_val},
+                  {"name": "mcp:tools_count", "value": str(count)},
+                  {"name": "mcp:tools_hash_spec",
+                   "value": "sha256/json(sort_keys)/name+description+inputSchema"},
+              ]
+              meta["properties"] = props
+              with open("sbom.cdx.json", "w") as f:
+                  json.dump(sbom, f, indent=2)
+          print(f"tools_hash={hash_val or ''}")
+          print(f"tools_count={count if count is not None else -1}")
+          PYEOF
+
       # Gate: no attestation unless Semgrep is clean of ERROR/HIGH/CRITICAL
       # findings AND Trivy found no HIGH/CRITICAL vulnerabilities
       - name: Security gate
@@ -154,7 +200,17 @@ jobs:
               "digest": "${{ steps.hash.outputs.digest }}",
               "sbom_size_bytes": os.path.getsize("sbom.cdx.json") if os.path.exists("sbom.cdx.json") else -1,
               "attestation_bundle_path": "${{ steps.attest.outputs.bundle-path }}",
+              "tools_hash_outcome": "${{ steps.tools_hash.outcome }}",
+              "tools_hash": "${{ steps.sbom_embed.outputs.tools_hash }}" or None,
+              "tools_count": int("${{ steps.sbom_embed.outputs.tools_count }}" or -1),
           }
+          try:
+              th = json.load(open("tools-hash.json"))
+              out["tools_hash_elapsed_s"] = th.get("elapsed_s")
+              out["tools_hash_setup_s"] = th.get("setup_elapsed_s")
+              out["tools_hash_error"] = th.get("error")
+          except Exception:
+              pass
           json.dump(out, open("metrics.json", "w"), indent=2)
           EOF
           cat metrics.json
@@ -174,5 +230,6 @@ jobs:
             semgrep-report.json
             trivy-report.json
             artifact.digest
+            tools-hash.json
             attestation.sigstore.json
           if-no-files-found: warn
