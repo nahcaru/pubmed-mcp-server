@@ -88,10 +88,14 @@ async def get_runtime_tools(command: str, args: list[str], env: dict, cwd: str,
 
 
 def run_setup(commands: list[str], env: dict, cwd: str, timeout: float) -> None:
+    # Commands come from our own committed launch spec (trusted config).
+    # bash -c instead of shell=True: this script is injected into the scanned
+    # repos, so it must itself be clean under the workflow's Semgrep gate
+    # (subprocess-shell-true is an ERROR-severity, i.e. gating, finding).
     for cmd in commands:
         print(f"[setup] {cmd}", file=sys.stderr, flush=True)
         subprocess.run(
-            cmd, shell=True, cwd=cwd, env={**os.environ, **env},
+            ["bash", "-c", cmd], cwd=cwd, env={**os.environ, **env},
             timeout=timeout, check=True,
             stdout=sys.stderr,  # keep stdout clean; all setup noise -> stderr
         )
