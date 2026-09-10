@@ -11,4 +11,4 @@ permissions:
 
 jobs:
   audit-and-attest:
-    uses: nahcaru/mcp-registry-security-profiles/.github/workflows/attest.yml@2ffb913f0da2ada27dbaf472449d47a3369d34e0
+    uses: nahcaru/mcp-registry-security-profiles/.github/workflows/attest.yml@11cb1873de5fe195c341e689dc6918ca9594d559
